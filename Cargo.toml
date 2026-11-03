@@ -1,0 +1,99 @@
+# polaris — Interactive Consistency under a dishonest majority.
+#
+# The root package is the node binary (network runner + CLI); the protocol
+# lives in the library crates under crates/. Versions are pinned once, in
+# [workspace.dependencies], and inherited with `name.workspace = true`.
+
+[package]
+name = "polaris"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "polaris node: tokio network runner and CLI"
+
+[dependencies]
+polaris-core.workspace = true
+polaris-crypto.workspace = true
+polaris-proto.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Highest MSRV among our dependencies (proptest, sha2). With resolver = "3"
+# cargo only picks dependency versions that compile on this toolchain.
+rust-version = "1.88"
+publish = false
+
+[workspace.dependencies]
+# internal
+polaris-core = { path = "crates/polaris-core" }
+polaris-crypto = { path = "crates/polaris-crypto" }
+polaris-proto = { path = "crates/polaris-proto" }
+polaris-sim = { path = "crates/polaris-sim" }
+
+# serialization (postcard: serde-native, compact varints, deterministic)
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+serde_json = "1"
+
+# crypto
+ed25519-dalek = { version = "3", features = ["batch", "rand_core", "serde"] }
+blst = "0.3"
+blake3 = "1"
+sha2 = "0.11"
+hmac = "0.13"
+rand = "0.10"
+rand_chacha = "0.10"
+
+# data structures, parallelism
+fixedbitset = "0.5"
+rayon = "1"
+
+# runtime and I/O
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+
+# CLI, config, logging, errors
+clap = { version = "4", features = ["derive"] }
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+thiserror = "2"
+
+# tests and benches
+proptest = "1"
+rstest = "0.28"
+insta = "1"
+criterion = "0.8"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+debug = 1          # symbols for flamegraphs
+lto = "thin"
+codegen-units = 1
