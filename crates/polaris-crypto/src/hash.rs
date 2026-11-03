@@ -1,9 +1,9 @@
 //! 32-byte digests with domain separation.
 
-/// A blake3 digest; the paper's `κ`-bit hash.
+/// A blake3 digest; the paper's `kappa`-bit hash.
 pub type Digest = [u8; 32];
 
-/// `H(tag ‖ len(body) ‖ body)`; the length prefix keeps tag and body from
+/// `H(tag || len(body) || body)`; the length prefix keeps tag and body from
 /// being re-split.
 pub fn digest(tag: &[u8], body: &[u8]) -> Digest {
     let mut h = blake3::Hasher::new();
