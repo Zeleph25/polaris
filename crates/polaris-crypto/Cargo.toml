@@ -1,0 +1,23 @@
+[package]
+name = "polaris-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Ed25519 (batch), BLS12-381 multi-signatures with proofs of possession, PRF, hashing, keygen"
+
+[dependencies]
+polaris-core.workspace = true
+serde.workspace = true
+ed25519-dalek.workspace = true
+blst.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

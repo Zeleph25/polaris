@@ -1,0 +1,25 @@
+[package]
+name = "polaris-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Lockstep simulator: adversaries, transcripts, property tests"
+
+[dependencies]
+polaris-core.workspace = true
+polaris-crypto.workspace = true
+polaris-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

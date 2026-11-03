@@ -1,0 +1,6 @@
+*.jsonl
+*.swp
+.DS_Store
+.idea/
+/runs/
+/target
