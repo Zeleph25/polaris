@@ -49,7 +49,7 @@ impl Params {
     }
 
     /// n - t: honest processes in the worst case, and the threshold of the
-    /// pruning rule (|N[a] inter N[b]| >= n - t).
+    /// pruning rule (`|N[a] inter N[b]| >= n - t`).
     pub fn min_honest(&self) -> usize {
         self.n - self.t
     }

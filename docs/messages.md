@@ -1,24 +1,48 @@
-# Message catalogue (M0)
+# Message catalogue
 
-Every message type on the wire, who signs it, over what, and its size. Sizes
-in bytes; `n` processes, `L_in` input size, Ed25519 signature 64 B, BLS
-signature 96 B (`min_pk`) or 48 B (`min_sig`) — decision pending.
+Every message type on the wire: who signs it, over what, and its encoded size.
+The wire format is `postcard` (`polaris-core/src/wire.rs`): integers are
+LEB128 varints, byte strings and vectors carry a varint length, enum
+variants a varint tag. In the sizes below `n` is the number of nodes, `L`
+the length of a value, and node ids take 1 byte (2 bytes from id 128 on).
+An Ed25519 signature encodes to 65 bytes (64 plus its length), a BLS
+signature to 49 (48 plus its length), a node set to about `3 + ceil(n / 8)`,
+and the run id to 1 byte for small ids (up to 10 bytes). Sizes are for a
+message on its own; inside an enum such as `LoeMsg` add 1 for the variant.
 
-Every envelope carries: `run_id` (8), `view` (varint), `instance` (1),
-`round` (varint), then the payload below. Signatures are over
-`tag ‖ run_id ‖ body` (tags in `polaris-crypto/src/domain.rs`).
+Every signature covers `tag || run_id || len(body) || body` with the tags of
+`polaris-crypto/src/domain.rs`, so nothing signed as one message type or in
+one run verifies as another. Accusations are scoped to the run, not to a
+view, so that reusing them across views stays possible without a format
+change.
 
-| Message | Instance | Body | Signed by | Signature | Size (approx.) | Notes |
+## Implemented
+
+| Message | Where | Body | Signed by | Signature | Size | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `disclose` | IC compiler, round 0; forwarded inside LearnOrExpose | sender `j`, `m_j` | `j` | Ed25519 | 2 + L_in + 64 | first valid one per sender is kept; conflicting ones ignored |
-| `accuse` | LearnOrExpose view `v`; WXSD trust graph | accuser `a`, target `b` | `a` | BLS (aggregatable per target) | 4 + sig | unscoped by view on purpose (see domain.rs) |
-| `vector` (LoE output) | input of BB_v | `vec[1..n]`, `sigs[1..n]`, `Π[j] = (multisig, signer bitset)` for `vec[j] = ⊥` | — | carried signatures | n(L_in + 64) + k(sig + n/8) | `k` = number of exposed entries |
-| `ds-echo` | Dolev–Strong BB_v (M3) | value hash, chain of `≤ r` signatures | each forwarder | Ed25519 | 32 + r(2 + 64) | value itself only in the sender's first message |
-| `wxsd-propose` | WXSD BB_v, epoch `e` (M4) | value or ⊥, commit evidence | epoch leader | Ed25519 | TBD | TrustCast-forwarded |
-| `wxsd-vote` | WXSD BB_v, epoch `e` | value hash or ⊥ | voter | Ed25519 | TBD | TrustCast-forwarded |
-| `wxsd-commit` | WXSD BB_v, epoch `e` | commit evidence (signed votes) or ⊥ | committer | Ed25519 | TBD | TrustCast-forwarded |
-| `equivocation` | any TrustCast | two conflicting signed messages from one sender | — | carried | 2 × msg | removes the sender from the trust graph |
-| `handshake` | network runner, per connection | nonce, node id | connecting node | Ed25519 | 2 + 32 + 64 | authenticated channels; nothing else is signed per message |
+| `Disclosure` | forwarded inside LearnOrExpose as `LoeMsg::Disclose`; later also the compiler's round 0 | `sender`, `value` | sender | Ed25519 on `value`, tag `ic/disclose` | `67 + L` | the first valid one per sender is kept |
+| `Accusation` | LearnOrExpose as `LoeMsg::Accuse`; later also the WXSD trust graph | `accuser`, `target` | accuser | BLS on `target` (2 bytes little-endian), tag `accuse` | `51` | aggregatable per target; a self-accusation or an unknown id is rejected before any pairing |
+| `MultiSig` | inside a proof | `signers` (node set), `sig` | the signers | one aggregate BLS signature on one body | `3 + ceil(n / 8) + 49` | verified against the sum of the signers' public keys; every key in the keyring has a checked proof of possession |
+| `AccusationProof` | the `Pi` of a verifiable vector | `per_target[j]`: the multi-signature of all accusations against `j`, or none | carried | | `n + k (3 + ceil(n / 8) + 49)` | `k` accused targets; `O(n^2 + n kappa)` bits |
+| `VerifiableVector` | LearnOrExpose output; later the input of the view's broadcast | `entries[j]`: `j`'s disclosure or bottom; `proof` | carried | | `n + present disclosures + proof` | `VerifyVec_in` checks the entries, `VerifyVec_out` also the disconnections |
+| `NaiveMsg` | the naive two-round broadcast | `value`, `sig` | the broadcast's sender | Ed25519 on `instance (8 bytes) || value`, tag `bb/naive` | `66 + L` | forwarded as is in round 2; a harness protocol, not a Byzantine broadcast |
+| `EchoMsg::Value` | signed echo, round 1 | `value`, `sig` | sender | Ed25519 on `"value:" || value`, tag `echo` | `67 + L` | the drivers' validation protocol |
+| `EchoMsg::Confirm` | signed echo, round 2 | `digest` of the vector of values, `sig` | sender | Ed25519 on `"confirm:" || digest`, tag `echo` | `98` | |
+| `Hello` | network runner, once per connection | `from`, `to`, `run_id`, `sig` | the connecting node | Ed25519 on `nonce || from || to` (32-byte nonce chosen by the acceptor), tag `net/handshake` | `68` | after the handshake nothing is signed per message |
+| `Frame` | network runner, every message | `run_id`, `round`, `payload` | none | | `4 + 2..15 + payload` | 4-byte big-endian length prefix; `round` is the round the message was sent in, which is how late messages are counted |
 
-Open: exact WXSD bodies after reading WXSD §4–5; whether votes and commits
-carry the hash only (depends on the commit-evidence rule).
+The view and the instance are not on the wire yet; they come with the
+compiler (the naive broadcast already signs its instance number).
+
+## Planned
+
+| Message | Where | Body | Signed by | Notes |
+| --- | --- | --- | --- | --- |
+| `ds-echo` | Dolev-Strong broadcast | value digest, chain of at most `r` signatures in round `r` | each forwarder, Ed25519, tag `bb/dolev-strong/echo` | the value itself travels only with the sender's first message; at most two values are forwarded per instance |
+| `wxsd-propose` | WXSD broadcast, epoch `e` | value or bottom, commit evidence | the epoch's leader, Ed25519, tag `bb/wxsd/propose` | TrustCast-forwarded |
+| `wxsd-vote` | WXSD broadcast, epoch `e` | value digest or bottom | the voter, Ed25519, tag `bb/wxsd/vote` | TrustCast-forwarded; whether votes carry only the digest depends on the commit-evidence rule |
+| `wxsd-commit` | WXSD broadcast, epoch `e` | commit evidence (signed votes) or bottom | the committer, Ed25519, tag `bb/wxsd/commit` | TrustCast-forwarded |
+| `equivocation` | any TrustCast | two conflicting signed messages from one sender | carried | removes the sender from the trust graph |
+
+The tags for all of these are already reserved in `domain.rs`, and the
+uniqueness test there covers them.

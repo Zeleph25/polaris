@@ -8,7 +8,7 @@
 //! sender. After that the stream is trusted, as the model's authenticated
 //! channels are, and nothing is signed per message.
 //!
-//! Frames: `u32` big-endian length, then a postcard [`Frame`] carrying the
+//! Frames: `u32` big-endian length, then a postcard `Frame` carrying the
 //! run id, the round the message is sent in, and the protocol payload.
 
 use std::net::SocketAddr;
