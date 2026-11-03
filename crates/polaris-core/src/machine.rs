@@ -14,15 +14,28 @@
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{NodeId, Outgoing, Params, Round};
+use crate::{Metrics, NodeId, Outgoing, Params, Round};
 
-/// What the driver hands a machine on every call. Keys are deliberately not
-/// here: a machine receives them when it is built.
+/// What the driver hands a machine on every call: identity, parameters, the
+/// run id, and the metrics sink it records verification work into. Keys are
+/// deliberately not here: a machine receives them when it is built.
 #[derive(Clone, Debug)]
 pub struct Ctx {
     pub me: NodeId,
     pub params: Params,
     pub run_id: u64,
+    pub metrics: Metrics,
+}
+
+impl Ctx {
+    pub fn new(me: NodeId, params: Params, run_id: u64) -> Self {
+        Self {
+            me,
+            params,
+            run_id,
+            metrics: Metrics::default(),
+        }
+    }
 }
 
 pub trait RoundMachine {
