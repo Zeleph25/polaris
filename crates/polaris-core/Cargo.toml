@@ -10,6 +10,7 @@ description = "Shared types: ids, rounds, system parameters, wire encoding, the 
 serde.workspace = true
 postcard.workspace = true
 thiserror.workspace = true
+fixedbitset.workspace = true
 
 [lints]
 workspace = true
