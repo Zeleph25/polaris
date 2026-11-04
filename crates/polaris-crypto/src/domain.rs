@@ -12,6 +12,7 @@ pub const HANDSHAKE: &[u8] = b"polaris/v1/net/handshake";
 pub const LEADER_PRF: &[u8] = b"polaris/v1/leader";
 pub const ECHO: &[u8] = b"polaris/v1/echo";
 
+pub const NAIVE_BB: &[u8] = b"polaris/v1/bb/naive";
 pub const DS_ECHO: &[u8] = b"polaris/v1/bb/dolev-strong/echo";
 
 pub const WXSD_PROPOSE: &[u8] = b"polaris/v1/bb/wxsd/propose";
@@ -31,6 +32,7 @@ pub const ALL: &[&[u8]] = &[
     HANDSHAKE,
     LEADER_PRF,
     ECHO,
+    NAIVE_BB,
     DS_ECHO,
     WXSD_PROPOSE,
     WXSD_VOTE,
