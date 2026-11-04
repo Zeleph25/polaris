@@ -1,4 +1,4 @@
-# polaris — Interactive Consistency under a dishonest majority.
+# polaris: Interactive Consistency under a dishonest majority.
 #
 # The root package is the node binary (network runner + CLI); the protocol
 # lives in the library crates under crates/. Versions are pinned once, in

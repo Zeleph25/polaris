@@ -1,5 +1,5 @@
-# Build with the current stable toolchain (edition 2024 needs ≥ 1.85; our
-# dependencies need ≥ 1.88). Run `rustup update stable` once; rustup then
+# Build with the current stable toolchain (edition 2024 needs 1.85 or newer; our
+# dependencies need 1.88 or newer). Run `rustup update stable` once; rustup then
 # picks this up automatically inside the repository.
 [toolchain]
 channel = "stable"
