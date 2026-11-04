@@ -19,6 +19,13 @@ thiserror.workspace = true
 polaris-sim.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+criterion.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+
+[[bench]]
+name = "make_graph"
+harness = false
 
 [lints]
 workspace = true
