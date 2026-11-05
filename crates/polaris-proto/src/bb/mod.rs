@@ -9,6 +9,7 @@
 
 use polaris_core::{NodeId, RoundMachine};
 
+pub mod dolev_strong;
 pub mod naive;
 
 pub trait Broadcast: RoundMachine<Output = Option<Vec<u8>>> {

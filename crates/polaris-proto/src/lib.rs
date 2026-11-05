@@ -5,7 +5,8 @@
 //! - [`accusations`]: signed accusations, per-target store, `Aggregate` into a proof.
 //! - [`disclosure`]: signed inputs, `VerifyVec_in`, the verifiable vector and `VerifyVec_out`.
 //! - [`learn_or_expose`]: Algorithm 2, exactly R = d + 1 rounds.
-//! - [`bb`]: the broadcast interface and a naive two-round broadcast for the harness.
+//! - [`bb`]: the broadcast interface, the Dolev-Strong broadcast, and a naive
+//!   two-round broadcast for the harness.
 
 pub mod accusations;
 pub mod bb;
