@@ -143,14 +143,21 @@ that record it.
 6. **Views are spaced `c = R` rounds apart by default**, so that at most one
    LearnOrExpose instance is running at a time. `c` will be a parameter of
    the compiler so that denser pipelining can be measured.
-7. **The naive broadcast stays in the tree.** It is a two-round broadcast
+7. **Dolev-Strong carries the value in every message** and signs
+   `instance || H(value)`. A digest-only chain would be smaller, but a
+   Byzantine sender can show the value to a single honest node, who then has
+   to carry it to the others; signing the digest keeps the signature cost
+   independent of the value's length, which matters once the value is a
+   whole vector. A node keeps at most two values, enough to decide bottom
+   and to make every other honest node see two as well.
+8. **The naive broadcast stays in the tree.** It is a two-round broadcast
    with validity but without agreement (a Byzantine sender and one
    Byzantine forwarder split the honest nodes; see
    `naive_broadcast_breaks_agreement`). It is the simplest machine behind
    the `Broadcast` interface, so the compiler and the drivers can be tested
    before Dolev-Strong and WXSD exist, and it gives the tests a broadcast
    that is known to fail.
-8. **Messages of a round are delivered in sender-id order** by both drivers,
+9. **Messages of a round are delivered in sender-id order** by both drivers,
    and a node's own `Dest::All` messages are in its own inbox. Protocol
    logic must not depend on arrival order, which the order-independent
    transcript fingerprints enforce.
@@ -172,12 +179,18 @@ that record it.
   so every failure is reproducible from `(n, t, seed)`. The full sweep, from
   `(8, 4)` to `(64, 48)` with 25 seeds each, passes; the largest proof seen
   was under 4 KB at `n = 64`.
+- Dolev-Strong (`crates/polaris-proto/tests/dolev_strong.rs`): the scripted
+  attack that breaks the naive broadcast, chains of `t` Byzantine signatures
+  shown to one node, short and forged chains, and a randomized rushing
+  adversary that extends every chain it sees, fabricates chains on fresh
+  values and forges links, over `(n, t)` up to `(10, 7)` with 40 seeds each.
+  Agreement holds every time and validity whenever the sender is honest.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 
 ## Next
 
-Dolev-Strong behind the `Broadcast` interface, then PRF leader election and
-the compiler with pipelined views (`c` as a parameter, the ordered decision
-scan, halting at `doneTime + Delta_sim`), then WXSD, the baselines (`n`
-parallel broadcasts) and the evaluation harness.
+PRF leader election and the compiler with pipelined views (`c` as a
+parameter, the ordered decision scan, halting at `doneTime + Delta_sim`),
+first over Dolev-Strong, then WXSD, the baselines (`n` parallel broadcasts)
+and the evaluation harness.

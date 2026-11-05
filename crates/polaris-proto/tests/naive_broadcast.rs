@@ -1,12 +1,11 @@
 //! The naive broadcast: validity holds, agreement provably does not.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use polaris_core::{Ctx, NodeId, Outgoing, Params, Round};
+use polaris_core::{NodeId, Outgoing, Params};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
 use polaris_proto::bb::naive::{NaiveBroadcast, NaiveMsg};
-use polaris_sim::{Adversary, HonestSend, Node, Silent, Simulator};
+use polaris_sim::{Node, Scripted, Silent, Simulator};
 
 const RUN: u64 = 11;
 const INSTANCE: u64 = 1;
@@ -29,27 +28,6 @@ fn bb(
         INSTANCE,
         input.map(<[u8]>::to_vec),
     )
-}
-
-/// Sends fixed messages at fixed rounds; the simplest Byzantine behavior.
-struct Scripted {
-    at_start: Vec<Outgoing<NaiveMsg>>,
-    after_round: BTreeMap<Round, Vec<Outgoing<NaiveMsg>>>,
-}
-
-impl Adversary<NaiveBroadcast> for Scripted {
-    fn start(&mut self, _: &mut Ctx) -> Vec<Outgoing<NaiveMsg>> {
-        std::mem::take(&mut self.at_start)
-    }
-    fn act(
-        &mut self,
-        _: &mut Ctx,
-        round: Round,
-        _: Vec<(NodeId, NaiveMsg)>,
-        _: &[HonestSend<'_, NaiveMsg>],
-    ) -> Vec<Outgoing<NaiveMsg>> {
-        self.after_round.remove(&round).unwrap_or_default()
-    }
 }
 
 fn outputs(sim: &Simulator<NaiveBroadcast>) -> Vec<Option<Option<Vec<u8>>>> {
@@ -118,10 +96,7 @@ fn equivocation_seen_by_honest_forwarders_gives_bottom_everywhere() {
         .iter()
         .map(|k| {
             if k.id == 0 {
-                Node::Byzantine(Box::new(Scripted {
-                    at_start: at_start.clone(),
-                    after_round: BTreeMap::new(),
-                }))
+                Node::Byzantine(Box::new(Scripted::at_start(at_start.clone())))
             } else {
                 Node::Honest(bb(&kr, k, 0, None))
             }
@@ -153,14 +128,14 @@ fn naive_broadcast_breaks_agreement() {
     let nodes = keys
         .iter()
         .map(|k| match k.id {
-            0 => Node::Byzantine(Box::new(Scripted {
-                at_start: vec![Outgoing::to(1, v1.clone())],
-                after_round: BTreeMap::new(),
-            })),
-            2 => Node::Byzantine(Box::new(Scripted {
-                at_start: vec![],
-                after_round: BTreeMap::from([(0, vec![Outgoing::to(3, v2.clone())])]),
-            })),
+            0 => Node::Byzantine(Box::new(Scripted::at_start(vec![Outgoing::to(
+                1,
+                v1.clone(),
+            )]))),
+            2 => Node::Byzantine(Box::new(Scripted::after_round(
+                0,
+                vec![Outgoing::to(3, v2.clone())],
+            ))),
             _ => Node::Honest(bb(&kr, k, 0, None)),
         })
         .collect();

@@ -9,6 +9,6 @@ pub mod adversary;
 pub mod driver;
 pub mod transcript;
 
-pub use adversary::{Adversary, HonestSend, Selective, Silent};
+pub use adversary::{Adversary, HonestSend, Scripted, Selective, Silent};
 pub use driver::{Node, SimError, Simulator};
 pub use transcript::{Entry, Transcript};

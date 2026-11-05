@@ -5,6 +5,8 @@
 //! of `r + 1`. Its messages can go to any subset of nodes, so an honest
 //! node's inbox is whatever the adversary chose for it.
 
+use std::collections::BTreeMap;
+
 use polaris_core::{Ctx, Dest, NodeId, NodeSet, Outgoing, Round, RoundMachine};
 
 /// A message an honest node is about to send, as the adversary sees it.
@@ -88,5 +90,44 @@ impl<M: RoundMachine + Send> Adversary<M> for Selective<M> {
     ) -> Vec<Outgoing<M::Msg>> {
         let out = self.inner.end_round(ctx, round, inbox);
         self.filter(out)
+    }
+}
+
+/// Sends fixed messages at fixed rounds: `at_start` at the start of the
+/// first round, `after_round[r]` at the start of round `r + 1`.
+pub struct Scripted<Msg> {
+    pub at_start: Vec<Outgoing<Msg>>,
+    pub after_round: BTreeMap<Round, Vec<Outgoing<Msg>>>,
+}
+
+impl<Msg> Scripted<Msg> {
+    pub fn at_start(msgs: Vec<Outgoing<Msg>>) -> Self {
+        Self {
+            at_start: msgs,
+            after_round: BTreeMap::new(),
+        }
+    }
+
+    pub fn after_round(round: Round, msgs: Vec<Outgoing<Msg>>) -> Self {
+        Self {
+            at_start: vec![],
+            after_round: BTreeMap::from([(round, msgs)]),
+        }
+    }
+}
+
+impl<M: RoundMachine> Adversary<M> for Scripted<M::Msg> {
+    fn start(&mut self, _ctx: &mut Ctx) -> Vec<Outgoing<M::Msg>> {
+        std::mem::take(&mut self.at_start)
+    }
+
+    fn act(
+        &mut self,
+        _ctx: &mut Ctx,
+        round: Round,
+        _inbox: Vec<(NodeId, M::Msg)>,
+        _honest_sends: &[HonestSend<'_, M::Msg>],
+    ) -> Vec<Outgoing<M::Msg>> {
+        self.after_round.remove(&round).unwrap_or_default()
     }
 }
