@@ -10,9 +10,9 @@ goal is to measure that protocol against n parallel broadcasts and a
 specialized parallel-broadcast protocol.
 
 Current state: the foundations (keys, drivers, metrics), the accusation
-graph and LearnOrExpose, the Dolev-Strong broadcast, and a naive two-round
-broadcast that exercises the broadcast interface. The compiler, WXSD and the
-baselines are next. See [docs/design.md](docs/design.md) for the
+graph and LearnOrExpose, the Dolev-Strong broadcast, and the compiler, which
+gives a first end-to-end Interactive Consistency under the simulator. The
+network run of the compiler, WXSD and the baselines are next. See [docs/design.md](docs/design.md) for the
 design and its decisions and [docs/messages.md](docs/messages.md) for the
 wire formats.
 
@@ -31,7 +31,7 @@ polaris/                   root package: the node binary
     polaris-crypto/        Ed25519 (batch verify), BLS12-381 multi-signatures with proofs of
                            possession, HMAC PRF, hashing, domain tags, key files
     polaris-proto/         trust graph, accusations, disclosures, LearnOrExpose, broadcasts
-                           (Dolev-Strong, and a naive one for the harness)
+                           (Dolev-Strong, and a naive one for the harness), the IC compiler
     polaris-sim/           lockstep simulator, adversaries, transcripts
   docs/                    design.md, messages.md
 ```

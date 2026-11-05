@@ -25,15 +25,13 @@ change.
 | `MultiSig` | inside a proof | `signers` (node set), `sig` | the signers | one aggregate BLS signature on one body | `3 + ceil(n / 8) + 49` | verified against the sum of the signers' public keys; every key in the keyring has a checked proof of possession |
 | `AccusationProof` | the `Pi` of a verifiable vector | `per_target[j]`: the multi-signature of all accusations against `j`, or none | carried | | `n + k (3 + ceil(n / 8) + 49)` | `k` accused targets; `O(n^2 + n kappa)` bits |
 | `VerifiableVector` | LearnOrExpose output; later the input of the view's broadcast | `entries[j]`: `j`'s disclosure or bottom; `proof` | carried | | `n + present disclosures + proof` | `VerifyVec_in` checks the entries, `VerifyVec_out` also the disconnections |
+| `IcMsg` | the compiler | `Disclose(Disclosure)`, `Loe { view, msg: LoeMsg }` or `Bb { view, msg }` | carried | | `1 + inner`, plus the view varint for the last two | the view routes the message to its LearnOrExpose or broadcast instance; messages for a view that has not started or has finished are dropped |
 | `DsMsg` | the Dolev-Strong broadcast | `value`, `chain` of `Link { signer, sig }` | the sender, then every forwarder | each link: Ed25519 on `instance (8 bytes) || H(value)`, tag `bb/dolev-strong/echo` | `1 + L + 1 + k * 66` | `k` links; a message received in round `r` needs at least `r` distinct signers, the first being the sender; at most two values are forwarded per node |
 | `NaiveMsg` | the naive two-round broadcast | `value`, `sig` | the broadcast's sender | Ed25519 on `instance (8 bytes) || value`, tag `bb/naive` | `66 + L` | forwarded as is in round 2; a harness protocol, not a Byzantine broadcast |
 | `EchoMsg::Value` | signed echo, round 1 | `value`, `sig` | sender | Ed25519 on `"value:" || value`, tag `echo` | `67 + L` | the drivers' validation protocol |
 | `EchoMsg::Confirm` | signed echo, round 2 | `digest` of the vector of values, `sig` | sender | Ed25519 on `"confirm:" || digest`, tag `echo` | `98` | |
 | `Hello` | network runner, once per connection | `from`, `to`, `run_id`, `sig` | the connecting node | Ed25519 on `nonce || from || to` (32-byte nonce chosen by the acceptor), tag `net/handshake` | `68` | after the handshake nothing is signed per message |
 | `Frame` | network runner, every message | `run_id`, `round`, `payload` | none | | `4 + 2..15 + payload` | 4-byte big-endian length prefix; `round` is the round the message was sent in, which is how late messages are counted |
-
-The view and the instance are not on the wire yet; they come with the
-compiler (the broadcasts already sign their instance number).
 
 ## Planned
 
