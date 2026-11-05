@@ -91,6 +91,13 @@ impl Metrics {
         self.decision_round.get_or_insert(round);
     }
 
+    /// Takes the open-round deltas of `inner` into this round. A machine
+    /// that runs other machines gives them their own `Metrics` so that their
+    /// decisions do not count as its own, and absorbs their work here.
+    pub fn absorb(&mut self, inner: &mut Metrics) {
+        self.current.add(&std::mem::take(&mut inner.current));
+    }
+
     pub fn decision_round(&self) -> Option<Round> {
         self.decision_round
     }

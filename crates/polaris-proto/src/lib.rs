@@ -7,9 +7,11 @@
 //! - [`learn_or_expose`]: Algorithm 2, exactly R = d + 1 rounds.
 //! - [`bb`]: the broadcast interface, the Dolev-Strong broadcast, and a naive
 //!   two-round broadcast for the harness.
+//! - [`compiler`]: Algorithm 1, Interactive Consistency from one broadcast per view.
 
 pub mod accusations;
 pub mod bb;
+pub mod compiler;
 pub mod disclosure;
 pub mod echo;
 pub mod learn_or_expose;

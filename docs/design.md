@@ -108,6 +108,26 @@ checks that the verifier is disconnected from every missing party; the
 answer is local to the verifier, but all honest verifiers agree because
 they always sit in one component.
 
+## The compiler
+
+`Compiler` (`polaris-proto/src/compiler.rs`) is Algorithm 1 as a round
+machine that runs other round machines. Round 0 discloses the signed input
+to all. From round 1 a view starts every `c` rounds: the leader
+`PRF(v) mod n` runs LearnOrExpose with everyone for `R` rounds and submits
+its vector, encoded, to a broadcast of which it is the sender. The broadcast
+is any `Broadcast` implementation, built per view by a factory the compiler
+is given, so the same compiler runs over Dolev-Strong today and WXSD later.
+A delivered vector is accepted if `VerifyVec_out` holds at the node's own
+position; the ordered scan decides on the first view (in view order) that
+delivered an accepted vector, and the output is that vector's values with
+bottom for the exposed parties. After deciding, the node keeps running the
+views in progress for the broadcast's termination skew (`Delta_sim`, zero
+for Dolev-Strong) and then halts.
+
+Sub-machines get their own context: they record signature work into it and
+also call `decided`, which must not count as the compiler's decision, so
+the compiler absorbs their counters into its own metrics every round.
+
 ## Decisions
 
 Each of these is a choice the paper leaves open or that differs from its
@@ -141,26 +161,31 @@ that record it.
    not a round later when they echo back. Same graph, one round earlier,
    and nothing is re-forwarded.
 6. **Views are spaced `c = R` rounds apart by default**, so that at most one
-   LearnOrExpose instance is running at a time. `c` will be a parameter of
-   the compiler so that denser pipelining can be measured.
-7. **Dolev-Strong carries the value in every message** and signs
+   LearnOrExpose instance is running at a time; `CompilerConfig` makes `c`
+   a parameter so that denser pipelining can be measured.
+7. **Every view's LearnOrExpose starts from all the disclosures the node
+   holds**, including those learned in earlier views, rather than from the
+   round 0 candidates only. The input vector stays `VerifyVec_in`-valid, so
+   nothing in the proofs changes; a party whose disclosure was slow is
+   simply resolved from the start of later views.
+8. **Dolev-Strong carries the value in every message** and signs
    `instance || H(value)`. A digest-only chain would be smaller, but a
    Byzantine sender can show the value to a single honest node, who then has
    to carry it to the others; signing the digest keeps the signature cost
    independent of the value's length, which matters once the value is a
    whole vector. A node keeps at most two values, enough to decide bottom
    and to make every other honest node see two as well.
-8. **The naive broadcast stays in the tree.** It is a two-round broadcast
+9. **The naive broadcast stays in the tree.** It is a two-round broadcast
    with validity but without agreement (a Byzantine sender and one
    Byzantine forwarder split the honest nodes; see
    `naive_broadcast_breaks_agreement`). It is the simplest machine behind
    the `Broadcast` interface, so the compiler and the drivers can be tested
    before Dolev-Strong and WXSD exist, and it gives the tests a broadcast
    that is known to fail.
-9. **Messages of a round are delivered in sender-id order** by both drivers,
-   and a node's own `Dest::All` messages are in its own inbox. Protocol
-   logic must not depend on arrival order, which the order-independent
-   transcript fingerprints enforce.
+10. **Messages of a round are delivered in sender-id order** by both
+    drivers, and a node's own `Dest::All` messages are in its own inbox.
+    Protocol logic must not depend on arrival order, which the
+    order-independent transcript fingerprints enforce.
 
 ## Testing
 
@@ -185,12 +210,19 @@ that record it.
   adversary that extends every chain it sees, fabricates chains on fresh
   values and forges links, over `(n, t)` up to `(10, 7)` with 40 seeds each.
   Agreement holds every time and validity whenever the sender is honest.
+- The compiler (`crates/polaris-proto/tests/compiler.rs`): all honest
+  decide in view 1 at the expected round and halt at once; silent Byzantine
+  leaders are skipped and exposed; a Byzantine leader submitting a vector
+  that drops an honest entry, or two valid vectors to two halves, is
+  skipped; the view budget stops the run; and random Byzantine sets that are
+  silent or deliver to random subsets, with `c = R` and `c = R / 2`, over
+  `(n, t)` up to `(10, 8)`: agreement, every honest input kept, a decision
+  no later than the first view with an honest leader, and simultaneous
+  termination.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 
 ## Next
 
-PRF leader election and the compiler with pipelined views (`c` as a
-parameter, the ordered decision scan, halting at `doneTime + Delta_sim`),
-first over Dolev-Strong, then WXSD, the baselines (`n` parallel broadcasts)
-and the evaluation harness.
+The compiler on the network runner, WXSD behind the broadcast interface,
+the baselines (`n` parallel broadcasts) and the evaluation harness.
