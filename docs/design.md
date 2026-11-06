@@ -56,9 +56,10 @@ Two drivers run the same machines:
 The `local` command runs `n` nodes in one process over real TCP and diffs
 every inbox against the simulator; this is the check that the two drivers
 agree. It is done in the test suite with the signed echo and with the
-compiler at `n = 8`, and by hand with the compiler at `n = 64` (two-second
-rounds on two cores: zero late messages, identical inboxes, all nodes
-deciding at round 38 for `t = 32`). The node binary runs the same two
+compiler over both broadcasts at `n = 8`, and by hand with the compiler at
+`n = 64` over Dolev-Strong (two-second rounds on two cores: zero late
+messages, identical inboxes, all nodes deciding at round 38 for `t = 32`)
+and at `n = 32` over WXSD (decision at round 16 for `t = 16`). The node binary runs the same two
 protocols from a config file, one process per node.
 
 ## Cryptography
@@ -110,6 +111,28 @@ aggregated proof. `VerifyVec_out` rebuilds the graph from the proof and
 checks that the verifier is disconnected from every missing party; the
 answer is local to the verifier, but all honest verifiers agree because
 they always sit in one component.
+
+## The WXSD broadcast
+
+`Wxsd` (`polaris-proto/src/bb/wxsd.rs`) is the Wan-Xiao-Shi-Devadas
+broadcast (TCC 2020), the paper's choice for `BB_v`, with expected
+constant epochs. Each instance keeps one trust graph: the accusation set and
+`MakeGraph` of LearnOrExpose, plus the nodes removed outright on
+equivocation evidence (two signed messages of one type and epoch from one
+node with different bodies, forwarded as proof). TrustCast is the paper's:
+a sender's signed message is forwarded by everyone, and at the end of round
+`r = 1..=d` a node missing a valid message from a sender still in its graph
+distrusts every neighbor at distance less than `r` from that sender. A
+phase is `d` such rounds plus one settling round, an epoch is three phases:
+Propose (the leader, the sender in epoch 1 and a PRF choice after, sends a
+value with the freshest commit evidence it holds, or bottom with none),
+Vote (for the proposed digest if the leader is still in the voter's graph,
+else an abstention) and Commit (a node whose whole graph voted for one
+digest outputs that value and sends those votes as evidence, else an empty
+commit). A node terminates once everyone in its graph has sent a commit
+with valid evidence for one digest; honest nodes terminate within one round
+of each other, so `termination_skew` is 1 and the compiler keeps the view
+running one round after deciding.
 
 ## The compiler
 
@@ -178,14 +201,31 @@ that record it.
    independent of the value's length, which matters once the value is a
    whole vector. A node keeps at most two values, enough to decide bottom
    and to make every other honest node see two as well.
-9. **The naive broadcast stays in the tree.** It is a two-round broadcast
-   with validity but without agreement (a Byzantine sender and one
-   Byzantine forwarder split the honest nodes; see
-   `naive_broadcast_breaks_agreement`). It is the simplest machine behind
-   the `Broadcast` interface, so the compiler and the drivers can be tested
-   before Dolev-Strong and WXSD exist, and it gives the tests a broadcast
-   that is known to fail.
-10. **Messages of a round are delivered in sender-id order** by both
+9. **WXSD details.** Values instead of bits: votes and evidence carry the
+   digest of `instance || value`, only proposals carry the value, and a
+   node only ever accepts evidence for a value it holds (evidence valid at
+   `u` contains `u`'s own vote for it). A leader without evidence proposes
+   the bottom value where the paper proposes a random bit, so a Byzantine
+   sender ends in bottom and the compiler skips the view. Each phase has a
+   settling round after its `d` check rounds, so that forwards and
+   distrusts of round `d` reach everyone before the next phase's messages
+   are formed; this is what keeps "the leader is still in the graph" and
+   "evidence valid at the committer" consistent between honest nodes. The
+   freshness a proposal's evidence is checked against is the evidence a
+   node had seen one round before the end of the previous Commit phase, so
+   that an honest leader's knowledge always covers it: a node that accepts
+   evidence in round `r` has forwarded it, and the leader holds it by
+   `r + 1`. The diameter bound is `d = ceil(2n / (n - t))` from
+   LearnOrExpose, slightly above the paper's `ceil(n/h) + floor(n/h) - 1`,
+   which only adds check rounds.
+10. **The naive broadcast stays in the tree.** It is a two-round broadcast
+    with validity but without agreement (a Byzantine sender and one
+    Byzantine forwarder split the honest nodes; see
+    `naive_broadcast_breaks_agreement`). It is the simplest machine behind
+    the `Broadcast` interface, so the compiler and the drivers could be
+    tested before Dolev-Strong and WXSD existed, and it gives the tests a
+    broadcast that is known to fail.
+11. **Messages of a round are delivered in sender-id order** by both
     drivers, and a node's own `Dest::All` messages are in its own inbox.
     Protocol logic must not depend on arrival order, which the
     order-independent transcript fingerprints enforce.
@@ -213,6 +253,15 @@ that record it.
   adversary that extends every chain it sees, fabricates chains on fresh
   values and forges links, over `(n, t)` up to `(10, 7)` with 40 seeds each.
   Agreement holds every time and validity whenever the sender is honest.
+- WXSD (`crates/polaris-proto/tests/wxsd.rs`): the honest sender decides
+  in the first epoch at the predicted round; a silent sender gives bottom
+  at the first honest leader with simultaneous termination; an
+  equivocating sender is removed everywhere; a proposal withheld from one
+  node reaches it by forwarding; fabricated evidence (Byzantine votes only)
+  and forged commits are rejected and their authors distrusted; random
+  silent or selective Byzantine sets up to `(10, 8)`: agreement, validity,
+  termination within one round, commit no later than the first honest
+  leader.
 - The compiler (`crates/polaris-proto/tests/compiler.rs`): all honest
   decide in view 1 at the expected round and halt at once; silent Byzantine
   leaders are skipped and exposed; a Byzantine leader submitting a vector
@@ -221,13 +270,14 @@ that record it.
   silent or deliver to random subsets, with `c = R` and `c = R / 2`, over
   `(n, t)` up to `(10, 8)`: agreement, every honest input kept, a decision
   no later than the first view with an honest leader, and simultaneous
-  termination.
+  termination. The same over WXSD, with decision rounds one apart at most.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 
 ## Next
 
-WXSD behind the broadcast interface, the baselines (`n` parallel
-broadcasts), the evaluation harness, and on the runner side one frame per
-recipient and round instead of one per message, since the first
-LearnOrExpose round sends `n^2` messages per node.
+The baselines (`n` parallel broadcasts, Dolev-Strong and WXSD), the
+evaluation harness, and on the runner side one frame per recipient and
+round instead of one per message: the first LearnOrExpose round sends
+`n^2` messages per node, and WXSD's Commit phase forwards `n^2` commits of
+`n` votes each.

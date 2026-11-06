@@ -7,15 +7,16 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use polaris::config::{NodeConfig, Protocol, unix_ms_from_now};
+use polaris::config::{BroadcastKind, NodeConfig, Protocol, unix_ms_from_now};
 use polaris::local::{
-    EchoMachines, IcMachines, LocalSpec, Machines, compare_with_simulator, echo_value, ic_input,
-    run_local,
+    EchoMachines, IcMachines, IcWxsdMachines, LocalSpec, Machines, compare_with_simulator,
+    echo_value, ic_input, run_local,
 };
 use polaris::net::Transport;
 use polaris::runner::{Outcome, Schedule, run_node};
 use polaris_core::{Params, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
+use polaris_proto::bb::wxsd::WxsdConfig;
 use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
 use serde::Serialize;
@@ -73,6 +74,9 @@ enum Cmd {
         max_rounds: u32,
         #[arg(long, value_enum, default_value_t = Protocol::Echo)]
         protocol: Protocol,
+        /// The broadcast of each view (`ic` only).
+        #[arg(long, value_enum, default_value_t = BroadcastKind::DolevStrong)]
+        broadcast: BroadcastKind,
         /// Rounds between view starts (`ic` only); the default is R.
         #[arg(long)]
         view_spacing: Option<u32>,
@@ -95,6 +99,8 @@ enum Cmd {
         seed: u64,
         #[arg(long, value_enum, default_value_t = Protocol::Echo)]
         protocol: Protocol,
+        #[arg(long, value_enum, default_value_t = BroadcastKind::DolevStrong)]
+        broadcast: BroadcastKind,
         #[arg(long)]
         view_spacing: Option<u32>,
         #[arg(long, default_value_t = 200)]
@@ -151,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
             start_in_s,
             max_rounds,
             protocol,
+            broadcast,
             view_spacing,
         } => {
             let params = Params::new(n, t)?;
@@ -176,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
                     max_frame_bytes: 64 << 20,
                     out_dir: "runs".into(),
                     protocol,
+                    broadcast,
                     view_spacing,
                     max_views: None,
                 };
@@ -235,14 +243,32 @@ async fn main() -> anyhow::Result<()> {
                     report(&cfg, &outcome)?;
                 }
                 Protocol::Ic => {
-                    let machine = Compiler::with_dolev_strong(
-                        kr.clone(),
-                        keys.clone(),
-                        ic_config(kr.params, cfg.view_spacing, cfg.max_views),
-                        ic_input(cfg.id),
-                    );
-                    let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
-                    report(&cfg, &outcome)?;
+                    let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
+                    match cfg.broadcast {
+                        BroadcastKind::DolevStrong => {
+                            let machine = Compiler::with_dolev_strong(
+                                kr.clone(),
+                                keys.clone(),
+                                config,
+                                ic_input(cfg.id),
+                            );
+                            let outcome =
+                                run_node(cfg.id, &schedule, transport, start, machine).await;
+                            report(&cfg, &outcome)?;
+                        }
+                        BroadcastKind::Wxsd => {
+                            let machine = Compiler::with_wxsd(
+                                kr.clone(),
+                                keys.clone(),
+                                config,
+                                WxsdConfig::default(),
+                                ic_input(cfg.id),
+                            );
+                            let outcome =
+                                run_node(cfg.id, &schedule, transport, start, machine).await;
+                            report(&cfg, &outcome)?;
+                        }
+                    }
                 }
             }
         }
@@ -252,6 +278,7 @@ async fn main() -> anyhow::Result<()> {
             round_ms,
             seed,
             protocol,
+            broadcast,
             view_spacing,
             max_rounds,
             out,
@@ -267,11 +294,19 @@ async fn main() -> anyhow::Result<()> {
             match protocol {
                 Protocol::Echo => local(&spec, &EchoMachines, out.as_deref()).await?,
                 Protocol::Ic => {
-                    let params = Params::new(n, t)?;
-                    let machines = IcMachines {
-                        config: ic_config(params, view_spacing, None),
-                    };
-                    local(&spec, &machines, out.as_deref()).await?;
+                    let config = ic_config(Params::new(n, t)?, view_spacing, None);
+                    match broadcast {
+                        BroadcastKind::DolevStrong => {
+                            local(&spec, &IcMachines { config }, out.as_deref()).await?;
+                        }
+                        BroadcastKind::Wxsd => {
+                            let machines = IcWxsdMachines {
+                                config,
+                                wxsd: WxsdConfig::default(),
+                            };
+                            local(&spec, &machines, out.as_deref()).await?;
+                        }
+                    }
                 }
             }
         }

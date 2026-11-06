@@ -10,9 +10,10 @@ goal is to measure that protocol against n parallel broadcasts and a
 specialized parallel-broadcast protocol.
 
 Current state: the foundations (keys, drivers, metrics), the accusation
-graph and LearnOrExpose, the Dolev-Strong broadcast, and the compiler, which
-gives end-to-end Interactive Consistency both under the simulator and over
-TCP. WXSD and the baselines are next. See [docs/design.md](docs/design.md) for the
+graph and LearnOrExpose, the Dolev-Strong and WXSD broadcasts, and the
+compiler over either, which gives end-to-end Interactive Consistency both
+under the simulator and over TCP. The baselines and the evaluation harness
+are next. See [docs/design.md](docs/design.md) for the
 design and its decisions and [docs/messages.md](docs/messages.md) for the
 wire formats.
 
@@ -31,7 +32,7 @@ polaris/                   root package: the node binary
     polaris-crypto/        Ed25519 (batch verify), BLS12-381 multi-signatures with proofs of
                            possession, HMAC PRF, hashing, domain tags, key files
     polaris-proto/         trust graph, accusations, disclosures, LearnOrExpose, broadcasts
-                           (Dolev-Strong, and a naive one for the harness), the IC compiler
+                           (Dolev-Strong, WXSD, and a naive one for the harness), the IC compiler
     polaris-sim/           lockstep simulator, adversaries, transcripts
   docs/                    design.md, messages.md
 ```
@@ -92,9 +93,10 @@ Criterion writes its reports under `target/criterion/`.
 
 The network runner runs either the signed echo (`--protocol echo`, the
 drivers' validation protocol, two rounds) or Interactive Consistency
-(`--protocol ic`: the compiler over Dolev-Strong, every node's input
-`input-of-<i>`). All nodes are honest on the network; adversaries live in
-the simulator.
+(`--protocol ic`, every node's input `input-of-<i>`) over the broadcast of
+`--broadcast`: `dolev-strong` (the default, t + 1 rounds) or `wxsd`
+(expected constant epochs). All nodes are honest on the network;
+adversaries live in the simulator.
 
 ```
 # n nodes in this process over real TCP; every inbox is compared with the simulator's
@@ -131,12 +133,16 @@ Each node writes into its `out_dir`:
 - `node-<i>.output.json`: the decided value (for `ic`: the view and the
   vector, values in hex, `null` for bottom).
 
-With all nodes honest, `ic` decides in view 1 at round `R + t + 1`
-(round 0 discloses, LearnOrExpose takes R rounds, Dolev-Strong t + 1). The
-first LearnOrExpose round is the heavy one: every node sends every
-disclosure it holds to everyone, `n^2` messages per node. On a two-core
-machine, 64 nodes in one process keep up with 2 s rounds (zero late
-messages, inboxes identical to the simulator's) but not with 500 ms.
+With all nodes honest, `ic` decides in view 1 at round `R + t + 1` over
+Dolev-Strong (round 0 discloses, LearnOrExpose takes R rounds, Dolev-Strong
+t + 1) and at round `R + 2(d + 1) + 1` over WXSD, with
+`d = ceil(2n / (n - t))`: for n = 32, t = 16 that is round 22 against
+round 16. The heavy rounds are LearnOrExpose's first (every node sends
+every disclosure it holds to everyone, `n^2` messages per node) and WXSD's
+Commit phase (every node forwards every commit, each carrying `n` votes).
+On a two-core machine, 64 nodes in one process keep up with 2 s rounds over
+Dolev-Strong, and 32 nodes over WXSD, with zero late messages and inboxes
+identical to the simulator's; 500 ms rounds are too short at those sizes.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 

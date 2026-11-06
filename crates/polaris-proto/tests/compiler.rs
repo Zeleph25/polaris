@@ -349,3 +349,129 @@ fn view_budget_is_respected() {
     assert_eq!(sim.honest(honest).unwrap().stats().views_started, 1);
     assert_eq!(sim.honest(honest).unwrap().stats().views_skipped, 1);
 }
+
+mod over_wxsd {
+    //! The same compiler over WXSD: the decision round differs by at most
+    //! `Delta_sim = 1` between honest nodes, and everything else holds.
+
+    use super::*;
+    use polaris_proto::bb::wxsd::{Wxsd, WxsdConfig};
+
+    type IcW = Compiler<Wxsd>;
+
+    fn ic(kr: &Arc<Keyring>, keys: &Arc<NodeKeys>, config: CompilerConfig) -> IcW {
+        Compiler::with_wxsd(
+            kr.clone(),
+            keys.clone(),
+            config,
+            WxsdConfig::default(),
+            input(keys.id),
+        )
+    }
+
+    fn check(sim: &Simulator<IcW>, byzantine: &[NodeId], n: usize) -> IcOutput {
+        let outs: Vec<IcOutput> = sim
+            .outputs()
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !byzantine.contains(&(*i as NodeId)))
+            .map(|(i, o)| {
+                o.cloned()
+                    .unwrap_or_else(|| panic!("node {i} has no output"))
+            })
+            .collect();
+        for o in &outs {
+            assert_eq!(o, &outs[0], "honest nodes disagree");
+        }
+        for j in 0..n as NodeId {
+            if !byzantine.contains(&j) {
+                assert_eq!(
+                    outs[0].values[usize::from(j)],
+                    Some(input(j)),
+                    "entry of honest {j}"
+                );
+            }
+        }
+        outs[0].clone()
+    }
+
+    #[test]
+    fn all_honest_decide_in_view_one() {
+        let (n, t) = (6, 2);
+        let (kr, keys) = setup(n, t, 1);
+        let config = CompilerConfig::for_params(kr.params);
+        let nodes = keys
+            .iter()
+            .map(|k| Node::Honest(ic(&kr, k, config)))
+            .collect();
+        let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+        // Round 0, R rounds of LearnOrExpose, then WXSD terminates in the
+        // first Commit round of epoch 1: two phases of d + 1 rounds plus one.
+        let last = kr.params.loe_rounds() + 2 * (kr.params.diameter_bound() + 1) + 1;
+        assert_eq!(sim.run_until_decided(100).unwrap(), last + 1);
+        let out = check(&sim, &[], n);
+        assert_eq!(out.view, 1);
+        for i in 0..n as NodeId {
+            assert_eq!(sim.metrics(i).decision_round(), Some(last));
+            assert!(
+                !sim.honest(i).unwrap().is_halted(),
+                "still running for Delta_sim = 1"
+            );
+        }
+        sim.step();
+        for i in 0..n as NodeId {
+            assert!(
+                sim.honest(i).unwrap().is_halted(),
+                "halted once the skew has passed"
+            );
+        }
+    }
+
+    #[test]
+    fn random_omission_adversaries() {
+        for &(n, t) in &[(4, 1), (6, 2), (8, 4), (8, 6)] {
+            for seed in 0..12u64 {
+                let (kr, keys) = setup(n, t, seed);
+                let mut rng = ChaCha12Rng::seed_from_u64(seed * 104729 + n as u64);
+                let mut ids: Vec<NodeId> = (0..n as NodeId).collect();
+                for i in (1..ids.len()).rev() {
+                    ids.swap(i, rng.random_range(0..=i));
+                }
+                let byzantine: Vec<NodeId> = ids[..t].to_vec();
+                let config = CompilerConfig::for_params(kr.params);
+                let nodes = keys
+                    .iter()
+                    .map(|k| {
+                        if !byzantine.contains(&k.id) {
+                            Node::Honest(ic(&kr, k, config))
+                        } else if rng.random_bool(0.3) {
+                            Node::Byzantine(Box::new(Silent))
+                        } else {
+                            let subset = NodeSet::from_iter(
+                                n,
+                                (0..n as NodeId).filter(|_| rng.random_bool(0.5)),
+                            );
+                            Node::Byzantine(Box::new(Selective::new(ic(&kr, k, config), subset)))
+                        }
+                    })
+                    .collect();
+                let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+                sim.run_until_decided(20_000)
+                    .unwrap_or_else(|e| panic!("n={n} t={t} seed={seed}: {e}"));
+                let out = check(&sim, &byzantine, n);
+                let bound = first_honest_leader(&kr, &byzantine);
+                assert!(
+                    out.view <= bound,
+                    "n={n} t={t} seed={seed}: view {} after {bound}",
+                    out.view
+                );
+                let rounds: Vec<_> = (0..n as NodeId)
+                    .filter(|i| !byzantine.contains(i))
+                    .map(|i| sim.metrics(i).decision_round().unwrap())
+                    .collect();
+                let (lo, hi) = (rounds.iter().min().unwrap(), rounds.iter().max().unwrap());
+                assert!(hi - lo <= 1, "n={n} t={t} seed={seed}: skew {rounds:?}");
+            }
+        }
+    }
+}

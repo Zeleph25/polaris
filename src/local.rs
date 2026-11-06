@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use polaris_core::{NodeId, Params, Round, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
 use polaris_proto::bb::dolev_strong::DolevStrong;
+use polaris_proto::bb::wxsd::{Wxsd, WxsdConfig};
 use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
 use polaris_sim::{Node, Simulator, Transcript};
@@ -76,6 +77,25 @@ impl Machines for IcMachines {
             keyring.clone(),
             Arc::new(keys.clone()),
             self.config,
+            ic_input(keys.id),
+        )
+    }
+}
+
+/// The IC compiler over WXSD.
+pub struct IcWxsdMachines {
+    pub config: CompilerConfig,
+    pub wxsd: WxsdConfig,
+}
+
+impl Machines for IcWxsdMachines {
+    type M = Compiler<Wxsd>;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
+        Compiler::with_wxsd(
+            keyring.clone(),
+            Arc::new(keys.clone()),
+            self.config,
+            self.wxsd,
             ic_input(keys.id),
         )
     }
@@ -157,8 +177,9 @@ where
     })
 }
 
-/// Runs the same machines in the simulator and returns the `(round, node)`
-/// inboxes whose fingerprints differ from the network run's (empty = match).
+/// Runs the same machines in the simulator for as many rounds as the
+/// network run and returns the `(round, node)` inboxes whose fingerprints
+/// differ from the network run's (empty = match).
 pub fn compare_with_simulator<F: Machines, O>(
     result: &LocalResult<O>,
     machines: &F,
@@ -172,6 +193,15 @@ pub fn compare_with_simulator<F: Machines, O>(
         .collect();
     let mut sim = Simulator::new(kr.params, kr.run_id, nodes)?;
     sim.run_until_decided(max_rounds)?;
+    let rounds_run = result
+        .outcomes
+        .iter()
+        .map(|o| o.rounds_run)
+        .max()
+        .unwrap_or(0);
+    while sim.round() < rounds_run {
+        sim.step();
+    }
     let expected = sim.transcript().inbox_fingerprints();
     let got = result.merged.inbox_fingerprints();
     let mut keys: Vec<_> = expected.keys().chain(got.keys()).copied().collect();

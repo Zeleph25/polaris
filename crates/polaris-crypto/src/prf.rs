@@ -29,7 +29,15 @@ impl Prf {
     }
 
     pub fn leader(&self, view: View, n: usize) -> NodeId {
-        let out = self.eval(domain::LEADER_PRF, u64::from(view));
+        self.leader_of(domain::LEADER_PRF, &u64::from(view).to_le_bytes(), n)
+    }
+
+    /// `PRF_tag(input) mod n`, for elections other than the compiler's views.
+    pub fn leader_of(&self, tag: &[u8], input: &[u8], n: usize) -> NodeId {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).expect("HMAC takes any key length");
+        mac.update(tag);
+        mac.update(input);
+        let out: [u8; 32] = mac.finalize().into_bytes().into();
         let x = u64::from_le_bytes(out[..8].try_into().expect("8 bytes"));
         NodeId::try_from(x % n as u64).expect("n fits a NodeId")
     }

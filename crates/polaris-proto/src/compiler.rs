@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bb::Broadcast;
 use crate::bb::dolev_strong::DolevStrong;
+use crate::bb::wxsd::{Wxsd, WxsdConfig};
 use crate::disclosure::{Disclosure, Entries, VerifiableVector};
 use crate::learn_or_expose::{LearnOrExpose, LoeMsg};
 
@@ -146,6 +147,22 @@ impl Compiler<DolevStrong> {
         let (kr, ks) = (keyring.clone(), keys.clone());
         let make_bb: MakeBroadcast<DolevStrong> = Box::new(move |sender, instance, input| {
             DolevStrong::new(kr.clone(), ks.clone(), sender, instance, input)
+        });
+        Self::new(keyring, keys, config, make_bb, input)
+    }
+}
+
+impl Compiler<Wxsd> {
+    pub fn with_wxsd(
+        keyring: Arc<Keyring>,
+        keys: Arc<NodeKeys>,
+        config: CompilerConfig,
+        wxsd: WxsdConfig,
+        input: Vec<u8>,
+    ) -> Self {
+        let (kr, ks) = (keyring.clone(), keys.clone());
+        let make_bb: MakeBroadcast<Wxsd> = Box::new(move |sender, instance, input| {
+            Wxsd::new(kr.clone(), ks.clone(), sender, instance, input, wxsd)
         });
         Self::new(keyring, keys, config, make_bb, input)
     }
