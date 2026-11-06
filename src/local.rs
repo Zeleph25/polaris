@@ -1,14 +1,18 @@
 //! An n-node cluster in one process over real TCP, and its check against
-//! the simulator.
+//! the simulator. Every node is honest: the network run measures, the
+//! simulator attacks.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use polaris_core::{NodeId, Params, Round};
+use polaris_core::{NodeId, Params, Round, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
-use polaris_proto::echo::{Echo, EchoOutput};
+use polaris_proto::bb::dolev_strong::DolevStrong;
+use polaris_proto::compiler::{Compiler, CompilerConfig};
+use polaris_proto::echo::Echo;
 use polaris_sim::{Node, Simulator, Transcript};
+use serde::Serialize;
 
 use crate::net::Transport;
 use crate::runner::{Outcome, Schedule, run_node};
@@ -23,27 +27,68 @@ pub struct LocalSpec {
     pub run_id: u64,
 }
 
-pub struct LocalResult {
+pub struct LocalResult<O> {
     pub keyring: Arc<Keyring>,
     pub keys: Vec<NodeKeys>,
-    pub outcomes: Vec<Outcome<EchoOutput>>,
+    pub outcomes: Vec<Outcome<O>>,
     /// Every node's received-message transcript, merged.
     pub merged: Transcript,
+}
+
+/// Builds node `keys.id`'s machine; called once for the network run and
+/// once more for the simulator run it is compared with.
+pub trait Machines: Send + Sync {
+    type M: RoundMachine + Send + 'static;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M;
 }
 
 pub fn echo_value(id: NodeId) -> Vec<u8> {
     format!("value-of-{id}").into_bytes()
 }
 
-fn echo(kr: &Arc<Keyring>, keys: &NodeKeys) -> Echo {
-    Echo::new(
-        kr.clone(),
-        Arc::new(keys.ed25519.clone()),
-        echo_value(keys.id),
-    )
+pub fn ic_input(id: NodeId) -> Vec<u8> {
+    format!("input-of-{id}").into_bytes()
 }
 
-pub async fn run_local_echo(spec: &LocalSpec) -> anyhow::Result<LocalResult> {
+/// The signed echo, the drivers' validation protocol.
+pub struct EchoMachines;
+
+impl Machines for EchoMachines {
+    type M = Echo;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Echo {
+        Echo::new(
+            keyring.clone(),
+            Arc::new(keys.ed25519.clone()),
+            echo_value(keys.id),
+        )
+    }
+}
+
+/// The IC compiler over Dolev-Strong, every node's input `ic_input(id)`.
+pub struct IcMachines {
+    pub config: CompilerConfig,
+}
+
+impl Machines for IcMachines {
+    type M = Compiler<DolevStrong>;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
+        Compiler::with_dolev_strong(
+            keyring.clone(),
+            Arc::new(keys.clone()),
+            self.config,
+            ic_input(keys.id),
+        )
+    }
+}
+
+pub async fn run_local<F>(
+    spec: &LocalSpec,
+    machines: &F,
+) -> anyhow::Result<LocalResult<<F::M as RoundMachine>::Output>>
+where
+    F: Machines,
+    <F::M as RoundMachine>::Output: Clone + Serialize + Send + 'static,
+{
     let params = Params::new(spec.n, spec.t)?;
     let (kr, keys) = keyring::generate(params, spec.run_id, spec.seed);
     let kr = Arc::new(kr);
@@ -87,7 +132,7 @@ pub async fn run_local_echo(spec: &LocalSpec) -> anyhow::Result<LocalResult> {
     let start = Instant::now() + Duration::from_millis(200);
     let mut runs = Vec::with_capacity(spec.n);
     for (i, transport) in transports.into_iter().enumerate() {
-        let machine = echo(&kr, &keys[i]);
+        let machine = machines.make(&kr, &keys[i]);
         let schedule = schedule.clone();
         let me = NodeId::try_from(i).expect("n fits a NodeId");
         runs.push(tokio::spawn(async move {
@@ -112,17 +157,18 @@ pub async fn run_local_echo(spec: &LocalSpec) -> anyhow::Result<LocalResult> {
     })
 }
 
-/// Runs the same echo in the simulator and returns the `(round, node)`
+/// Runs the same machines in the simulator and returns the `(round, node)`
 /// inboxes whose fingerprints differ from the network run's (empty = match).
-pub fn compare_with_simulator(
-    result: &LocalResult,
+pub fn compare_with_simulator<F: Machines, O>(
+    result: &LocalResult<O>,
+    machines: &F,
     max_rounds: u32,
 ) -> anyhow::Result<Vec<(Round, NodeId)>> {
     let kr = &result.keyring;
     let nodes = result
         .keys
         .iter()
-        .map(|k| Node::Honest(echo(kr, k)))
+        .map(|k| Node::Honest(machines.make(kr, k)))
         .collect();
     let mut sim = Simulator::new(kr.params, kr.run_id, nodes)?;
     sim.run_until_decided(max_rounds)?;

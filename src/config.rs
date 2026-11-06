@@ -7,11 +7,14 @@ use anyhow::Context as _;
 use polaris_core::NodeId;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
+    /// The signed echo: validates the drivers, two rounds.
     #[default]
     Echo,
+    /// Interactive Consistency: the compiler over Dolev-Strong.
+    Ic,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +42,12 @@ pub struct NodeConfig {
     pub out_dir: PathBuf,
     #[serde(default)]
     pub protocol: Protocol,
+    /// Rounds between view starts for `ic`; the default is R.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_spacing: Option<u32>,
+    /// Views started at most for `ic`; unlimited by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_views: Option<u32>,
 }
 
 fn default_max_rounds() -> u32 {
