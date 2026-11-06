@@ -207,6 +207,7 @@ async fn dial(
     run_id: u64,
     deadline: Instant,
 ) -> anyhow::Result<mpsc::UnboundedSender<Vec<u8>>> {
+    let started = Instant::now();
     let mut stream = loop {
         match TcpStream::connect(addr).await {
             Ok(s) => break s,
@@ -214,7 +215,14 @@ async fn dial(
                 tracing::debug!(%addr, error = %e, "connect failed, retrying");
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            Err(e) => return Err(e).with_context(|| format!("connecting to {addr}")),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "no connection to {addr} after retrying for {:.0?}; is that node running?",
+                        started.elapsed()
+                    )
+                });
+            }
         }
     };
     stream.set_nodelay(true)?;

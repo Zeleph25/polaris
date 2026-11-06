@@ -208,6 +208,13 @@ async fn main() -> anyhow::Result<()> {
                 cfg.connect_timeout(),
             )
             .await?;
+            if cfg.start_at_unix_ms != 0 && cfg.start_at_unix_ms <= unix_ms_from_now(Duration::ZERO)
+            {
+                tracing::warn!(
+                    "the start time in the config has already passed: this node begins round 0 at once and \
+                     will not be in step with nodes started at another moment; rerun genconfig"
+                );
+            }
             let start = cfg.start_instant();
             let schedule = Schedule {
                 params: kr.params,
