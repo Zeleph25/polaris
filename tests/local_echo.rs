@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use polaris::local::{LocalSpec, compare_with_simulator, run_local_echo};
+use polaris::local::{EchoMachines, LocalSpec, compare_with_simulator, run_local};
 use polaris_core::NodeSet;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -17,7 +17,7 @@ async fn tcp_cluster_matches_the_simulator() {
         seed: 3,
         run_id: 9,
     };
-    let result = run_local_echo(&spec).await.unwrap();
+    let result = run_local(&spec, &EchoMachines).await.unwrap();
 
     let first = result.outcomes[0].output.clone().unwrap();
     assert_eq!(first.agreeing, NodeSet::full(n));
@@ -28,7 +28,7 @@ async fn tcp_cluster_matches_the_simulator() {
         assert_eq!(m.msgs_recv, 2 * n as u64, "node {}", o.me);
         assert_eq!(m.late_msgs, 0, "node {}", o.me);
     }
-    let mismatches = compare_with_simulator(&result, spec.max_rounds).unwrap();
+    let mismatches = compare_with_simulator(&result, &EchoMachines, spec.max_rounds).unwrap();
     assert!(mismatches.is_empty(), "inboxes differ: {mismatches:?}");
 
     let dir = std::env::temp_dir().join(format!("polaris-local-echo-{}", std::process::id()));

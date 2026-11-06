@@ -29,8 +29,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use polaris_core::{Ctx, NodeId, Outgoing, Params, Round, RoundMachine, View, wire};
-use polaris_crypto::ed25519;
 use polaris_crypto::keyring::{Keyring, NodeKeys};
+use polaris_crypto::{ed25519, hex};
 use serde::{Deserialize, Serialize};
 
 use crate::bb::Broadcast;
@@ -76,11 +76,17 @@ pub enum IcMsg<M> {
     Bb { view: View, msg: M },
 }
 
-/// The decided vector and the view it came from.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The decided vector and the view it came from. Serializes the values as
+/// hex strings (`null` for bottom) so that output files stay readable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct IcOutput {
     pub view: View,
+    #[serde(serialize_with = "hex_values")]
     pub values: Vec<Option<Vec<u8>>>,
+}
+
+fn hex_values<S: serde::Serializer>(values: &[Option<Vec<u8>>], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(values.iter().map(|v| v.as_deref().map(hex::encode)))
 }
 
 /// What happened in one run, for tests and metrics.

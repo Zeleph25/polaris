@@ -55,8 +55,11 @@ Two drivers run the same machines:
 
 The `local` command runs `n` nodes in one process over real TCP and diffs
 every inbox against the simulator; this is the check that the two drivers
-agree, done with the signed echo protocol at `n = 8` in the test suite and
-at `n = 64` by hand.
+agree. It is done in the test suite with the signed echo and with the
+compiler at `n = 8`, and by hand with the compiler at `n = 64` (two-second
+rounds on two cores: zero late messages, identical inboxes, all nodes
+deciding at round 38 for `t = 32`). The node binary runs the same two
+protocols from a config file, one process per node.
 
 ## Cryptography
 
@@ -224,5 +227,7 @@ that record it.
 
 ## Next
 
-The compiler on the network runner, WXSD behind the broadcast interface,
-the baselines (`n` parallel broadcasts) and the evaluation harness.
+WXSD behind the broadcast interface, the baselines (`n` parallel
+broadcasts), the evaluation harness, and on the runner side one frame per
+recipient and round instead of one per message, since the first
+LearnOrExpose round sends `n^2` messages per node.

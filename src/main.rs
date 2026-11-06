@@ -1,19 +1,24 @@
 //! `polaris` command line: key generation, cluster configs, one node, and a
 //! local in-process cluster checked against the simulator.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use polaris::config::{NodeConfig, Protocol, unix_ms_from_now};
-use polaris::local::{LocalSpec, compare_with_simulator, echo_value, run_local_echo};
+use polaris::local::{
+    EchoMachines, IcMachines, LocalSpec, Machines, compare_with_simulator, echo_value, ic_input,
+    run_local,
+};
 use polaris::net::Transport;
-use polaris::runner::{Schedule, run_node};
-use polaris_core::Params;
+use polaris::runner::{Outcome, Schedule, run_node};
+use polaris_core::{Params, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
+use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
+use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -66,13 +71,18 @@ enum Cmd {
         start_in_s: u64,
         #[arg(long, default_value_t = 100)]
         max_rounds: u32,
+        #[arg(long, value_enum, default_value_t = Protocol::Echo)]
+        protocol: Protocol,
+        /// Rounds between view starts (`ic` only); the default is R.
+        #[arg(long)]
+        view_spacing: Option<u32>,
     },
     /// Run one node from a config file.
     Node {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Run an n-node echo cluster in this process over TCP and check its
+    /// Run an n-node cluster in this process over TCP and check its
     /// per-round inboxes against the simulator.
     Local {
         #[arg(long, default_value_t = 8)]
@@ -83,6 +93,12 @@ enum Cmd {
         round_ms: u64,
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        #[arg(long, value_enum, default_value_t = Protocol::Echo)]
+        protocol: Protocol,
+        #[arg(long)]
+        view_spacing: Option<u32>,
+        #[arg(long, default_value_t = 200)]
+        max_rounds: u32,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -134,6 +150,8 @@ async fn main() -> anyhow::Result<()> {
             round_ms,
             start_in_s,
             max_rounds,
+            protocol,
+            view_spacing,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -157,7 +175,9 @@ async fn main() -> anyhow::Result<()> {
                     connect_timeout_s: start_in_s + 5,
                     max_frame_bytes: 64 << 20,
                     out_dir: "runs".into(),
-                    protocol: Protocol::Echo,
+                    protocol,
+                    view_spacing,
+                    max_views: None,
                 };
                 std::fs::write(out.join(format!("node-{i}.toml")), cfg.to_toml()?)?;
             }
@@ -197,74 +217,125 @@ async fn main() -> anyhow::Result<()> {
                 linger_rounds: cfg.linger_rounds,
             };
             tracing::info!(node = cfg.id, "connected; waiting for round 0");
-            let outcome = match cfg.protocol {
+            match cfg.protocol {
                 Protocol::Echo => {
                     let machine = Echo::new(
                         kr.clone(),
                         Arc::new(keys.ed25519.clone()),
                         echo_value(cfg.id),
                     );
-                    run_node(cfg.id, &schedule, transport, start, machine).await
+                    let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                    report(&cfg, &outcome)?;
                 }
-            };
-            outcome.write_to(&cfg.out_dir)?;
-            let m = outcome.metrics.total();
-            println!(
-                "node {}: decided at round {:?}, {} rounds, sent {} msgs / {} B, received {} msgs, {} late; files in {}",
-                cfg.id,
-                outcome.decision_round,
-                outcome.rounds_run,
-                m.msgs_sent,
-                m.bytes_sent,
-                m.msgs_recv,
-                m.late_msgs,
-                cfg.out_dir.display()
-            );
+                Protocol::Ic => {
+                    let machine = Compiler::with_dolev_strong(
+                        kr.clone(),
+                        keys.clone(),
+                        ic_config(kr.params, cfg.view_spacing, cfg.max_views),
+                        ic_input(cfg.id),
+                    );
+                    let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                    report(&cfg, &outcome)?;
+                }
+            }
         }
         Cmd::Local {
             n,
             t,
             round_ms,
             seed,
+            protocol,
+            view_spacing,
+            max_rounds,
             out,
         } => {
             let spec = LocalSpec {
                 n,
                 t,
                 round: Duration::from_millis(round_ms),
-                max_rounds: 20,
+                max_rounds,
                 seed,
                 run_id: 1,
             };
-            let result = run_local_echo(&spec).await?;
-            if let Some(dir) = &out {
-                for o in &result.outcomes {
-                    o.write_to(dir)?;
+            match protocol {
+                Protocol::Echo => local(&spec, &EchoMachines, out.as_deref()).await?,
+                Protocol::Ic => {
+                    let params = Params::new(n, t)?;
+                    let machines = IcMachines {
+                        config: ic_config(params, view_spacing, None),
+                    };
+                    local(&spec, &machines, out.as_deref()).await?;
                 }
-            }
-            let decided: Vec<_> = result.outcomes.iter().map(|o| o.decision_round).collect();
-            let late: u64 = result
-                .outcomes
-                .iter()
-                .map(|o| o.metrics.total().late_msgs)
-                .sum();
-            let first = result.outcomes[0].output.as_ref();
-            let agree = result.outcomes.iter().all(|o| o.output.as_ref() == first);
-            let mismatches = compare_with_simulator(&result, spec.max_rounds)?;
-            println!(
-                "n = {n}, round = {round_ms} ms: decision rounds {decided:?}, late messages {late}, outputs {}",
-                if agree { "identical" } else { "DIFFER" }
-            );
-            if mismatches.is_empty() {
-                println!("per-round inboxes match the simulator exactly");
-            } else {
-                println!(
-                    "{} inboxes differ from the simulator: {mismatches:?}",
-                    mismatches.len()
-                );
-                std::process::exit(1);
             }
         }
     }
     Ok(())
+}
+
+fn ic_config(params: Params, view_spacing: Option<u32>, max_views: Option<u32>) -> CompilerConfig {
+    let mut config = CompilerConfig::for_params(params);
+    if let Some(c) = view_spacing {
+        config = config.with_view_spacing(c);
+    }
+    if let Some(v) = max_views {
+        config = config.with_max_views(v);
+    }
+    config
+}
+
+fn report<O: Serialize>(cfg: &NodeConfig, outcome: &Outcome<O>) -> anyhow::Result<()> {
+    outcome.write_to(&cfg.out_dir)?;
+    let m = outcome.metrics.total();
+    println!(
+        "node {}: decided at round {:?}, {} rounds, sent {} msgs / {} B, received {} msgs, {} late; files in {}",
+        cfg.id,
+        outcome.decision_round,
+        outcome.rounds_run,
+        m.msgs_sent,
+        m.bytes_sent,
+        m.msgs_recv,
+        m.late_msgs,
+        cfg.out_dir.display()
+    );
+    Ok(())
+}
+
+/// Runs the cluster, writes the files, prints the summary, and exits with
+/// an error if any inbox differs from the simulator's.
+async fn local<F>(spec: &LocalSpec, machines: &F, out: Option<&Path>) -> anyhow::Result<()>
+where
+    F: Machines,
+    <F::M as RoundMachine>::Output: Clone + Serialize + Send + PartialEq,
+{
+    let result = run_local(spec, machines).await?;
+    if let Some(dir) = out {
+        for o in &result.outcomes {
+            o.write_to(dir)?;
+        }
+    }
+    let decided: Vec<_> = result.outcomes.iter().map(|o| o.decision_round).collect();
+    let late: u64 = result
+        .outcomes
+        .iter()
+        .map(|o| o.metrics.total().late_msgs)
+        .sum();
+    let first = result.outcomes[0].output.as_ref();
+    let agree = result.outcomes.iter().all(|o| o.output.as_ref() == first);
+    let mismatches = compare_with_simulator(&result, machines, spec.max_rounds)?;
+    println!(
+        "n = {}, round = {} ms: decision rounds {decided:?}, late messages {late}, outputs {}",
+        spec.n,
+        spec.round.as_millis(),
+        if agree { "identical" } else { "DIFFER" }
+    );
+    if mismatches.is_empty() {
+        println!("per-round inboxes match the simulator exactly");
+        Ok(())
+    } else {
+        println!(
+            "{} inboxes differ from the simulator: {mismatches:?}",
+            mismatches.len()
+        );
+        std::process::exit(1);
+    }
 }

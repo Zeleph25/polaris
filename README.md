@@ -11,8 +11,8 @@ specialized parallel-broadcast protocol.
 
 Current state: the foundations (keys, drivers, metrics), the accusation
 graph and LearnOrExpose, the Dolev-Strong broadcast, and the compiler, which
-gives a first end-to-end Interactive Consistency under the simulator. The
-network run of the compiler, WXSD and the baselines are next. See [docs/design.md](docs/design.md) for the
+gives end-to-end Interactive Consistency both under the simulator and over
+TCP. WXSD and the baselines are next. See [docs/design.md](docs/design.md) for the
 design and its decisions and [docs/messages.md](docs/messages.md) for the
 wire formats.
 
@@ -90,30 +90,33 @@ Criterion writes its reports under `target/criterion/`.
 
 ## Running nodes
 
-The network runner currently runs the signed echo protocol, which is what
-the drivers are validated with; the protocol machines of `polaris-proto` are
-exercised under the simulator until the compiler exists.
+The network runner runs either the signed echo (`--protocol echo`, the
+drivers' validation protocol, two rounds) or Interactive Consistency
+(`--protocol ic`: the compiler over Dolev-Strong, every node's input
+`input-of-<i>`). All nodes are honest on the network; adversaries live in
+the simulator.
 
 ```
 # n nodes in this process over real TCP; every inbox is compared with the simulator's
-cargo run --release -- local --n 8 --round-ms 200 --out runs/local
+cargo run --release -- local --protocol ic --n 16 --t 4 --round-ms 300 --out runs/local
 
 # keys and configs for n separate processes on one host, then one terminal per node
-cargo run --release -- genconfig --n 4 --t 1 --out cluster --base-port 7000 --round-ms 200 --start-in-s 15
+cargo run --release -- genconfig --protocol ic --n 4 --t 1 --out cluster --base-port 7000 --round-ms 300 --start-in-s 15
 cargo run --release -- node --config cluster/node-0.toml   # and node-1, node-2, node-3 before the start
 
 # only the bulletin-board key file and the secret files
 cargo run --release -- keygen --n 8 --t 4 --out keys
 ```
 
-`genconfig` writes `keyring.toml` (every node's public keys and proofs of
-possession), `node-<i>.secret.toml` and `node-<i>.toml`. The config carries
-the peer addresses, the round length, the shared wall-clock start of round 0,
-and limits (`max_rounds`, `linger_rounds`, `connect_timeout_s`,
-`max_frame_bytes`); relative paths resolve against the config file. For
-hosts other than one machine, edit the `peers` list, keep the same
-`start_at_unix_ms` everywhere, and make sure the clocks are synchronized to
-well within one round.
+`--view-spacing` sets `c` for `ic` (default R). `genconfig` writes
+`keyring.toml` (every node's public keys and proofs of possession),
+`node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
+addresses, the round length, the shared wall-clock start of round 0, the
+protocol and its options, and limits (`max_rounds`, `linger_rounds`,
+`connect_timeout_s`, `max_frame_bytes`); relative paths resolve against the
+config file. For hosts other than one machine, edit the `peers` list, keep
+the same `start_at_unix_ms` everywhere, and make sure the clocks are
+synchronized to well within one round.
 
 Each node writes into its `out_dir`:
 
@@ -125,7 +128,15 @@ Each node writes into its `out_dir`:
 - `node-<i>.transcript.jsonl`: what the node received in each round, with
   order-independent digests, in the format the simulator produces, so the two
   can be diffed;
-- `node-<i>.output.json`: the decided value.
+- `node-<i>.output.json`: the decided value (for `ic`: the view and the
+  vector, values in hex, `null` for bottom).
+
+With all nodes honest, `ic` decides in view 1 at round `R + t + 1`
+(round 0 discloses, LearnOrExpose takes R rounds, Dolev-Strong t + 1). The
+first LearnOrExpose round is the heavy one: every node sends every
+disclosure it holds to everyone, `n^2` messages per node. On a two-core
+machine, 64 nodes in one process keep up with 2 s rounds (zero late
+messages, inboxes identical to the simulator's) but not with 500 ms.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 
