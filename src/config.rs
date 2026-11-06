@@ -13,8 +13,19 @@ pub enum Protocol {
     /// The signed echo: validates the drivers, two rounds.
     #[default]
     Echo,
-    /// Interactive Consistency: the compiler over Dolev-Strong.
+    /// Interactive Consistency: the compiler over a broadcast.
     Ic,
+}
+
+/// The broadcast the compiler runs in each view.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum BroadcastKind {
+    /// t + 1 rounds, deterministic.
+    #[default]
+    DolevStrong,
+    /// Wan-Xiao-Shi-Devadas: expected constant epochs over a trust graph.
+    Wxsd,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,6 +53,9 @@ pub struct NodeConfig {
     pub out_dir: PathBuf,
     #[serde(default)]
     pub protocol: Protocol,
+    /// The broadcast of each view for `ic`.
+    #[serde(default)]
+    pub broadcast: BroadcastKind,
     /// Rounds between view starts for `ic`; the default is R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_spacing: Option<u32>,

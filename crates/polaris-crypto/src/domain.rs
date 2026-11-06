@@ -18,6 +18,8 @@ pub const DS_ECHO: &[u8] = b"polaris/v1/bb/dolev-strong/echo";
 pub const WXSD_PROPOSE: &[u8] = b"polaris/v1/bb/wxsd/propose";
 pub const WXSD_VOTE: &[u8] = b"polaris/v1/bb/wxsd/vote";
 pub const WXSD_COMMIT: &[u8] = b"polaris/v1/bb/wxsd/commit";
+pub const WXSD_VALUE: &[u8] = b"polaris/v1/bb/wxsd/value";
+pub const WXSD_LEADER_PRF: &[u8] = b"polaris/v1/bb/wxsd/leader";
 
 /// BLS hash-to-curve domain separation tags (DSTs); the message type is
 /// separated by the tag inside the signed input, the proof of possession by
@@ -37,6 +39,8 @@ pub const ALL: &[&[u8]] = &[
     WXSD_PROPOSE,
     WXSD_VOTE,
     WXSD_COMMIT,
+    WXSD_VALUE,
+    WXSD_LEADER_PRF,
 ];
 
 #[cfg(test)]

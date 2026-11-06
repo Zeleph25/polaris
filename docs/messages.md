@@ -16,8 +16,6 @@ one run verifies as another. Accusations are scoped to the run, not to a
 view, so that reusing them across views stays possible without a format
 change.
 
-## Implemented
-
 | Message | Where | Body | Signed by | Signature | Size | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `Disclosure` | forwarded inside LearnOrExpose as `LoeMsg::Disclose`; later also the compiler's round 0 | `sender`, `value` | sender | Ed25519 on `value`, tag `ic/disclose` | `67 + L` | the first valid one per sender is kept |
@@ -28,19 +26,12 @@ change.
 | `IcMsg` | the compiler | `Disclose(Disclosure)`, `Loe { view, msg: LoeMsg }` or `Bb { view, msg }` | carried | | `1 + inner`, plus the view varint for the last two | the view routes the message to its LearnOrExpose or broadcast instance; messages for a view that has not started or has finished are dropped |
 | `DsMsg` | the Dolev-Strong broadcast | `value`, `chain` of `Link { signer, sig }` | the sender, then every forwarder | each link: Ed25519 on `instance (8 bytes) || H(value)`, tag `bb/dolev-strong/echo` | `1 + L + 1 + k * 66` | `k` links; a message received in round `r` needs at least `r` distinct signers, the first being the sender; at most two values are forwarded per node |
 | `NaiveMsg` | the naive two-round broadcast | `value`, `sig` | the broadcast's sender | Ed25519 on `instance (8 bytes) || value`, tag `bb/naive` | `66 + L` | forwarded as is in round 2; a harness protocol, not a Byzantine broadcast |
+| `WxsdMsg::Propose` | WXSD, Propose phase | `Signed<Proposal { epoch, value, evidence }>` | the epoch's leader | Ed25519 on `instance || body`, tag `bb/wxsd/propose` | `3 + L + evidence` | the only message that carries a value; `evidence` is the freshest commit evidence the leader holds, or none |
+| `WxsdMsg::Vote` | WXSD, Vote phase | `Signed<Vote { epoch, ballot }>`, ballot `Abstain` or `For(digest)` | every node | Ed25519, tag `bb/wxsd/vote` | `70` or `103` | `Abstain` when the leader has left the voter's graph |
+| `WxsdMsg::Commit` | WXSD, Commit phase | `Signed<Commit { epoch, evidence }>` | every node | Ed25519, tag `bb/wxsd/commit` | `69` or `69 + evidence` | evidence: `epoch`, `digest`, and the signed votes of everyone in the committer's graph, `36 + 103 k` bytes for `k` votes |
+| `WxsdMsg::Accuse` | WXSD, any round | an `Accusation` | the accuser | BLS, tag `accuse` | `52` | the paper's distrust message; same type as LearnOrExpose's |
+| `WxsdMsg::Equivocation` | WXSD, any round | two signed messages of one type and epoch from one node with different bodies | carried | | `2 x` message | removes the node from every graph; forwarded once |
 | `EchoMsg::Value` | signed echo, round 1 | `value`, `sig` | sender | Ed25519 on `"value:" || value`, tag `echo` | `67 + L` | the drivers' validation protocol |
 | `EchoMsg::Confirm` | signed echo, round 2 | `digest` of the vector of values, `sig` | sender | Ed25519 on `"confirm:" || digest`, tag `echo` | `98` | |
 | `Hello` | network runner, once per connection | `from`, `to`, `run_id`, `sig` | the connecting node | Ed25519 on `nonce || from || to` (32-byte nonce chosen by the acceptor), tag `net/handshake` | `68` | after the handshake nothing is signed per message |
 | `Frame` | network runner, every message | `run_id`, `round`, `payload` | none | | `4 + 2..15 + payload` | 4-byte big-endian length prefix; `round` is the round the message was sent in, which is how late messages are counted |
-
-## Planned
-
-| Message | Where | Body | Signed by | Notes |
-| --- | --- | --- | --- | --- |
-| `wxsd-propose` | WXSD broadcast, epoch `e` | value or bottom, commit evidence | the epoch's leader, Ed25519, tag `bb/wxsd/propose` | TrustCast-forwarded |
-| `wxsd-vote` | WXSD broadcast, epoch `e` | value digest or bottom | the voter, Ed25519, tag `bb/wxsd/vote` | TrustCast-forwarded; whether votes carry only the digest depends on the commit-evidence rule |
-| `wxsd-commit` | WXSD broadcast, epoch `e` | commit evidence (signed votes) or bottom | the committer, Ed25519, tag `bb/wxsd/commit` | TrustCast-forwarded |
-| `equivocation` | any TrustCast | two conflicting signed messages from one sender | carried | removes the sender from the trust graph |
-
-The tags for these are already reserved in `domain.rs`, and the uniqueness
-test there covers them.

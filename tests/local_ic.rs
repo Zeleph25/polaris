@@ -51,3 +51,41 @@ async fn ic_cluster_matches_the_simulator() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ic_over_wxsd_cluster_matches_the_simulator() {
+    use polaris::local::IcWxsdMachines;
+    use polaris_proto::bb::wxsd::WxsdConfig;
+
+    let (n, t) = (8, 2);
+    let params = Params::new(n, t).unwrap();
+    let spec = LocalSpec {
+        n,
+        t,
+        round: Duration::from_millis(300),
+        max_rounds: 60,
+        seed: 5,
+        run_id: 11,
+    };
+    let machines = IcWxsdMachines {
+        config: CompilerConfig::for_params(params),
+        wxsd: WxsdConfig::default(),
+    };
+    let result = run_local(&spec, &machines).await.unwrap();
+
+    // LearnOrExpose, then WXSD terminates in the first Commit round of
+    // epoch 1: two phases of d + 1 rounds plus one.
+    let last = params.loe_rounds() + 2 * (params.diameter_bound() + 1) + 1;
+    let first = result.outcomes[0].output.clone().unwrap();
+    assert_eq!(first.view, 1);
+    for o in &result.outcomes {
+        assert_eq!(o.output.as_ref(), Some(&first), "node {} differs", o.me);
+        assert_eq!(o.decision_round, Some(last), "node {}", o.me);
+        assert_eq!(o.metrics.total().late_msgs, 0, "node {}", o.me);
+    }
+    for j in 0..n as NodeId {
+        assert_eq!(first.values[usize::from(j)], Some(ic_input(j)));
+    }
+    let mismatches = compare_with_simulator(&result, &machines, spec.max_rounds).unwrap();
+    assert!(mismatches.is_empty(), "inboxes differ: {mismatches:?}");
+}
