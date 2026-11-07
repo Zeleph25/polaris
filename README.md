@@ -142,9 +142,11 @@ t + 1) and at round `R + 2(d + 1) + 1` over WXSD, with
 round 16. The heavy rounds are LearnOrExpose's first (every node sends
 every disclosure it holds to everyone, `n^2` messages per node) and WXSD's
 Commit phase (every node forwards every commit, each carrying `n` votes).
-On a two-core machine, 64 nodes in one process keep up with 2 s rounds over
-Dolev-Strong, and 32 nodes over WXSD, with zero late messages and inboxes
-identical to the simulator's; 500 ms rounds are too short at those sizes.
+The runner packs a round's messages to one peer into a single frame, so a
+round costs `n` system calls per node whatever the protocol sends; on a
+two-core machine, 64 nodes in one process keep up with 500 ms rounds over
+Dolev-Strong and 32 nodes over WXSD, with zero late messages and inboxes
+identical to the simulator's.
 
 First numbers, node 0 of an all-honest run in one process on two cores
 with 2 s rounds (`local --out`, the `summary` line of the metrics file):
@@ -158,12 +160,13 @@ with 2 s rounds (`local --out`, the `summary` line of the metrics file):
 | ic | dolev-strong | 32 | 16 | 22 | 5280 | 760 KB | 67 |
 | ic | wxsd | 32 | 16 | 16 | 7392 | 4.3 MB | 194 |
 | parallel | dolev-strong | 32 | 16 | 16 | 1024 | 147 KB | 31 |
-| parallel | wxsd | 32 | 16 | (115 MB sent per node, then out of memory) | | | |
+| parallel | wxsd | 32 | 16 | 10 | 68640 | 115 MB | 3104 |
 
 With every node honest, n parallel Dolev-Strong is one forward per value
 and nothing beats it; the compiler's advantage is against n parallel WXSD,
-where it sends an order of magnitude fewer bytes, and in adversarial runs,
-which the simulator measures.
+where it sends an order of magnitude fewer bytes (27 times fewer at
+n = 32, a run that needs 5.6 GB for the 32 nodes of one process), and in
+adversarial runs, which the simulator measures.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 

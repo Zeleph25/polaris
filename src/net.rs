@@ -9,7 +9,11 @@
 //! channels are, and nothing is signed per message.
 //!
 //! Frames: `u32` big-endian length, then a postcard `Frame` carrying the
-//! run id, the round the message is sent in, and the protocol payload.
+//! run id, the round the messages are sent in, and every protocol message
+//! of that round for that peer. One frame per peer and round keeps the
+//! system-call count at `n` per round whatever the protocol sends; the
+//! receiver splits a frame back into messages, so metrics, transcripts and
+//! late-message accounting stay per message.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,7 +36,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 struct Frame {
     run_id: u64,
     round: Round,
-    payload: Vec<u8>,
+    payloads: Vec<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -145,27 +149,38 @@ impl Transport {
         })
     }
 
-    /// Queues `payload` for `to`, labeled with the round it is sent in.
-    /// A message to ourselves is delivered without touching the network.
-    pub fn send(&self, to: NodeId, round: Round, payload: Vec<u8>) {
+    /// Queues every payload of a round for `to` as one frame, labeled with
+    /// the round it is sent in. Messages to ourselves are delivered without
+    /// touching the network.
+    pub fn send_batch(&self, to: NodeId, round: Round, payloads: Vec<Vec<u8>>) {
+        if payloads.is_empty() {
+            return;
+        }
         if to == self.me {
-            let _ = self.loopback.send(Received {
-                from: self.me,
-                round,
-                payload,
-                at: Instant::now(),
-            });
+            for payload in payloads {
+                let _ = self.loopback.send(Received {
+                    from: self.me,
+                    round,
+                    payload,
+                    at: Instant::now(),
+                });
+            }
             return;
         }
         let frame = wire::encode(&Frame {
             run_id: self.run_id,
             round,
-            payload,
+            payloads,
         })
         .expect("frame serializes");
         if let Some(tx) = &self.peers[usize::from(to)] {
             let _ = tx.send(framed(&frame));
         }
+    }
+
+    /// One message to `to`, as its own frame.
+    pub fn send(&self, to: NodeId, round: Round, payload: Vec<u8>) {
+        self.send_batch(to, round, vec![payload]);
     }
 
     pub async fn recv(&mut self) -> Option<Received> {
@@ -325,16 +340,19 @@ async fn handle_incoming(
         if frame.run_id != keyring.run_id {
             continue;
         }
-        if tx
-            .send(Received {
-                from,
-                round: frame.round,
-                payload: frame.payload,
-                at: Instant::now(),
-            })
-            .is_err()
-        {
-            return Ok(());
+        let at = Instant::now();
+        for payload in frame.payloads {
+            if tx
+                .send(Received {
+                    from,
+                    round: frame.round,
+                    payload,
+                    at,
+                })
+                .is_err()
+            {
+                return Ok(());
+            }
         }
     }
 }
