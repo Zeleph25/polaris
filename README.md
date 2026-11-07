@@ -12,8 +12,8 @@ specialized parallel-broadcast protocol.
 Current state: the foundations (keys, drivers, metrics), the accusation
 graph and LearnOrExpose, the Dolev-Strong and WXSD broadcasts, the
 compiler over either, which gives end-to-end Interactive Consistency both
-under the simulator and over TCP, and the baselines (n parallel
-broadcasts). The evaluation harness is next. See [docs/design.md](docs/design.md) for the
+under the simulator and over TCP, the baselines (n parallel broadcasts),
+and the evaluation harness that runs them all and plots the results. See [docs/design.md](docs/design.md) for the
 design and its decisions and [docs/messages.md](docs/messages.md) for the
 wire formats.
 
@@ -35,6 +35,7 @@ polaris/                   root package: the node binary
                            (Dolev-Strong, WXSD, and a naive one for the harness), the IC
                            compiler, the parallel-broadcast baseline
     polaris-sim/           lockstep simulator, adversaries, transcripts
+  eval/                    matrix.toml, run.py (one process per node), aggregate.py (tables, plots)
   docs/                    design.md, messages.md
 ```
 
@@ -169,6 +170,33 @@ n = 32, a run that needs 5.6 GB for the 32 nodes of one process), and in
 adversarial runs, which the simulator measures.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
+
+## Evaluation
+
+`eval/matrix.toml` lists the experiments (protocol, broadcast, sizes,
+repetitions, round length); `eval/run.py` runs them with one process per
+node on this host and `eval/aggregate.py` turns the results into a table
+and plots:
+
+```
+cargo build --release
+python3 eval/run.py eval/matrix.toml --out eval/results        # --only ic-wxsd for one experiment
+python3 eval/aggregate.py eval/results --plots
+```
+
+Every run keeps its cluster files, the nodes' logs and their metrics,
+transcript and output files under `eval/results/<experiment>/n<n>-t<t>/rep<k>/`,
+and `summary.md`, `summary.csv` and one PNG per metric appear in
+`eval/results/`. The metrics are the decision round and the wall-clock time
+to decision (the largest over the nodes), bytes and messages sent, signature
+verification time, CPU time and peak memory (means per node), late messages,
+and whether every node decided the same output. Python 3.11 or newer;
+matplotlib for the plots.
+
+The matrix as shipped (n up to 32, three repetitions, 500 ms rounds) runs
+in about six minutes on two cores. For several hosts, generate the clusters
+with `genconfig`, edit the `peers` lists, and start the nodes with any
+remote launcher; the aggregator only needs the `runs/` directories.
 
 ## Conventions
 

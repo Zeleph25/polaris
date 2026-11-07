@@ -1,7 +1,7 @@
-*.jsonl
-*.swp
-.DS_Store
-.idea/
-/runs/
 /target
+/runs/
+*.jsonl
+.DS_Store
 /cluster/
+/eval/results/
+/.idea/

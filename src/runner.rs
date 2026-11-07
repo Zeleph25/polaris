@@ -37,6 +37,51 @@ pub struct Outcome<O> {
     pub rounds_run: u32,
     pub metrics: Metrics,
     pub transcript: Transcript,
+    /// Wall-clock time from round 0 to the decision.
+    pub decided_after: Option<Duration>,
+    /// Wall-clock time from round 0 to the end of the last round.
+    pub ran_for: Duration,
+    /// CPU time and peak memory of this process at the end of the run.
+    pub resources: Resources,
+}
+
+/// What the process has used so far, from `getrusage`.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct Resources {
+    pub cpu_user_ms: u64,
+    pub cpu_sys_ms: u64,
+    /// Peak resident set, in kilobytes.
+    pub max_rss_kb: u64,
+}
+
+impl Resources {
+    #[allow(unsafe_code)]
+    pub fn now() -> Self {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        // SAFETY: getrusage fills a complete rusage for RUSAGE_SELF and
+        // returns 0; the struct is only read after that.
+        let usage = unsafe {
+            if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0 {
+                return Self::default();
+            }
+            usage.assume_init()
+        };
+        let ms = |tv: libc::timeval| {
+            u64::try_from(tv.tv_sec).unwrap_or(0) * 1000
+                + u64::try_from(tv.tv_usec).unwrap_or(0) / 1000
+        };
+        let rss = u64::try_from(usage.ru_maxrss).unwrap_or(0);
+        Self {
+            cpu_user_ms: ms(usage.ru_utime),
+            cpu_sys_ms: ms(usage.ru_stime),
+            // macOS reports bytes, Linux kilobytes.
+            max_rss_kb: if cfg!(target_os = "macos") {
+                rss / 1024
+            } else {
+                rss
+            },
+        }
+    }
 }
 
 pub async fn run_node<M>(
@@ -54,6 +99,7 @@ where
     let mut transcript = Transcript::default();
     let mut future: BTreeMap<Round, Vec<Received>> = BTreeMap::new();
     let mut decided_at: Option<Round> = None;
+    let mut decided_after: Option<Duration> = None;
 
     tokio::time::sleep_until(start.into()).await;
     let first = machine.start(&mut ctx);
@@ -104,6 +150,7 @@ where
 
         if decided_at.is_none() && machine.output().is_some() {
             decided_at = Some(round);
+            decided_after = Some(start.elapsed());
             ctx.metrics.decided(round);
             tracing::debug!(node = me, round, "decided");
         }
@@ -121,6 +168,9 @@ where
         rounds_run: round,
         metrics: ctx.metrics,
         transcript,
+        decided_after,
+        ran_for: start.elapsed(),
+        resources: Resources::now(),
     }
 }
 
@@ -190,6 +240,9 @@ impl<O: Serialize> Outcome<O> {
                 "node": self.me,
                 "decision_round": self.decision_round,
                 "rounds_run": self.rounds_run,
+                "decided_after_ms": self.decided_after.map(|d| d.as_millis()),
+                "ran_for_ms": self.ran_for.as_millis(),
+                "resources": self.resources,
                 "output": self.output,
             }))?,
         )?;

@@ -290,10 +290,14 @@ that record it.
   termination within one round.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
+- The evaluation harness (`eval/`): the experiment matrix run with one
+  process per node, aggregated into tables and plots; `run.json` per run
+  records the exit codes, and the aggregator checks that every node of a
+  run decided the same output.
 
 ## Next
 
-The evaluation harness (experiment matrix, launching one process per
-node, collecting the metrics, tables and plots), then the improvements:
-accusations shared across views and with the WXSD trust graph, and
-aggregated trust-graph evidence.
+Experiments on more than one host and under adversaries on the network,
+the honest-majority reference implementations from the project brief, and
+the improvements: accusations shared across views and with the WXSD trust
+graph, and aggregated trust-graph evidence.
