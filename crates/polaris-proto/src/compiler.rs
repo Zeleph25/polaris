@@ -86,7 +86,10 @@ pub struct IcOutput {
     pub values: Vec<Option<Vec<u8>>>,
 }
 
-fn hex_values<S: serde::Serializer>(values: &[Option<Vec<u8>>], s: S) -> Result<S::Ok, S::Error> {
+pub(crate) fn hex_values<S: serde::Serializer>(
+    values: &[Option<Vec<u8>>],
+    s: S,
+) -> Result<S::Ok, S::Error> {
     s.collect_seq(values.iter().map(|v| v.as_deref().map(hex::encode)))
 }
 

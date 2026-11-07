@@ -9,8 +9,8 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use polaris::config::{BroadcastKind, NodeConfig, Protocol, unix_ms_from_now};
 use polaris::local::{
-    EchoMachines, IcMachines, IcWxsdMachines, LocalSpec, Machines, compare_with_simulator,
-    echo_value, ic_input, run_local,
+    EchoMachines, IcMachines, IcWxsdMachines, LocalSpec, Machines, ParallelDsMachines,
+    ParallelWxsdMachines, compare_with_simulator, echo_value, ic_input, run_local,
 };
 use polaris::net::Transport;
 use polaris::runner::{Outcome, Schedule, run_node};
@@ -19,6 +19,7 @@ use polaris_crypto::keyring::{self, Keyring, NodeKeys};
 use polaris_proto::bb::wxsd::WxsdConfig;
 use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
+use polaris_proto::parallel::Parallel;
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
@@ -242,6 +243,24 @@ async fn main() -> anyhow::Result<()> {
                     let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
                     report(&cfg, &outcome)?;
                 }
+                Protocol::Parallel => match cfg.broadcast {
+                    BroadcastKind::DolevStrong => {
+                        let machine =
+                            Parallel::with_dolev_strong(kr.clone(), keys.clone(), ic_input(cfg.id));
+                        let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                        report(&cfg, &outcome)?;
+                    }
+                    BroadcastKind::Wxsd => {
+                        let machine = Parallel::with_wxsd(
+                            kr.clone(),
+                            keys.clone(),
+                            WxsdConfig::default(),
+                            ic_input(cfg.id),
+                        );
+                        let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                        report(&cfg, &outcome)?;
+                    }
+                },
                 Protocol::Ic => {
                     let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
                     match cfg.broadcast {
@@ -293,6 +312,17 @@ async fn main() -> anyhow::Result<()> {
             };
             match protocol {
                 Protocol::Echo => local(&spec, &EchoMachines, out.as_deref()).await?,
+                Protocol::Parallel => match broadcast {
+                    BroadcastKind::DolevStrong => {
+                        local(&spec, &ParallelDsMachines, out.as_deref()).await?;
+                    }
+                    BroadcastKind::Wxsd => {
+                        let machines = ParallelWxsdMachines {
+                            wxsd: WxsdConfig::default(),
+                        };
+                        local(&spec, &machines, out.as_deref()).await?;
+                    }
+                },
                 Protocol::Ic => {
                     let config = ic_config(Params::new(n, t)?, view_spacing, None);
                     match broadcast {

@@ -10,10 +10,10 @@ goal is to measure that protocol against n parallel broadcasts and a
 specialized parallel-broadcast protocol.
 
 Current state: the foundations (keys, drivers, metrics), the accusation
-graph and LearnOrExpose, the Dolev-Strong and WXSD broadcasts, and the
+graph and LearnOrExpose, the Dolev-Strong and WXSD broadcasts, the
 compiler over either, which gives end-to-end Interactive Consistency both
-under the simulator and over TCP. The baselines and the evaluation harness
-are next. See [docs/design.md](docs/design.md) for the
+under the simulator and over TCP, and the baselines (n parallel
+broadcasts). The evaluation harness is next. See [docs/design.md](docs/design.md) for the
 design and its decisions and [docs/messages.md](docs/messages.md) for the
 wire formats.
 
@@ -32,7 +32,8 @@ polaris/                   root package: the node binary
     polaris-crypto/        Ed25519 (batch verify), BLS12-381 multi-signatures with proofs of
                            possession, HMAC PRF, hashing, domain tags, key files
     polaris-proto/         trust graph, accusations, disclosures, LearnOrExpose, broadcasts
-                           (Dolev-Strong, WXSD, and a naive one for the harness), the IC compiler
+                           (Dolev-Strong, WXSD, and a naive one for the harness), the IC
+                           compiler, the parallel-broadcast baseline
     polaris-sim/           lockstep simulator, adversaries, transcripts
   docs/                    design.md, messages.md
 ```
@@ -91,12 +92,13 @@ Criterion writes its reports under `target/criterion/`.
 
 ## Running nodes
 
-The network runner runs either the signed echo (`--protocol echo`, the
-drivers' validation protocol, two rounds) or Interactive Consistency
-(`--protocol ic`, every node's input `input-of-<i>`) over the broadcast of
-`--broadcast`: `dolev-strong` (the default, t + 1 rounds) or `wxsd`
-(expected constant epochs). All nodes are honest on the network;
-adversaries live in the simulator.
+The network runner runs one of three protocols (`--protocol`): the signed
+echo (`echo`, the drivers' validation protocol, two rounds), Interactive
+Consistency (`ic`, the compiler of the paper) or the baseline of n parallel
+broadcasts (`parallel`), the last two over the broadcast of `--broadcast`:
+`dolev-strong` (the default, t + 1 rounds) or `wxsd` (expected constant
+epochs). Every node's input is `input-of-<i>`. All nodes are honest on the
+network; adversaries live in the simulator.
 
 ```
 # n nodes in this process over real TCP; every inbox is compared with the simulator's
@@ -143,6 +145,25 @@ Commit phase (every node forwards every commit, each carrying `n` votes).
 On a two-core machine, 64 nodes in one process keep up with 2 s rounds over
 Dolev-Strong, and 32 nodes over WXSD, with zero late messages and inboxes
 identical to the simulator's; 500 ms rounds are too short at those sizes.
+
+First numbers, node 0 of an all-honest run in one process on two cores
+with 2 s rounds (`local --out`, the `summary` line of the metrics file):
+
+| protocol | broadcast | n | t | decision round | messages | bytes | signature checks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ic | dolev-strong | 16 | 4 | 9 | 816 | 108 KB | 33 |
+| ic | wxsd | 16 | 4 | 13 | 1904 | 668 KB | 98 |
+| parallel | dolev-strong | 16 | 4 | 4 | 256 | 36 KB | 15 |
+| parallel | wxsd | 16 | 4 | 8 | 8976 | 7.9 MB | 784 |
+| ic | dolev-strong | 32 | 16 | 22 | 5280 | 760 KB | 67 |
+| ic | wxsd | 32 | 16 | 16 | 7392 | 4.3 MB | 194 |
+| parallel | dolev-strong | 32 | 16 | 16 | 1024 | 147 KB | 31 |
+| parallel | wxsd | 32 | 16 | (115 MB sent per node, then out of memory) | | | |
+
+With every node honest, n parallel Dolev-Strong is one forward per value
+and nothing beats it; the compiler's advantage is against n parallel WXSD,
+where it sends an order of magnitude fewer bytes, and in adversarial runs,
+which the simulator measures.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 
