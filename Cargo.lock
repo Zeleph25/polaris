@@ -991,6 +991,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "polaris-core",
  "polaris-crypto",
  "polaris-proto",

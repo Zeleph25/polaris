@@ -1,0 +1,34 @@
+# The experiment matrix for eval/run.py. Every experiment runs each of its
+# sizes `reps` times with one process per node on this host; results go to
+# <out>/<name>/n<n>-t<t>/rep<k>/.
+
+[defaults]
+round_ms = 500
+reps = 3
+start_in_s = 3
+base_port = 7000
+max_rounds = 400
+
+[[experiment]]
+name = "ic-ds"
+protocol = "ic"
+broadcast = "dolev-strong"
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd"
+protocol = "ic"
+broadcast = "wxsd"
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-ds"
+protocol = "parallel"
+broadcast = "dolev-strong"
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-wxsd"
+protocol = "parallel"
+broadcast = "wxsd"
+sizes = [[8, 2], [16, 4]]

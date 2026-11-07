@@ -26,6 +26,7 @@ tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+libc.workspace = true
 
 [lints]
 workspace = true
@@ -69,6 +70,7 @@ rayon = "1"
 
 # runtime and I/O
 tokio = { version = "1", features = ["full"] }
+libc = "0.2"
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
 
@@ -87,7 +89,8 @@ insta = "1"
 criterion = "0.8"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Denied, not forbidden: the runner reads getrusage in one audited place.
+unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
