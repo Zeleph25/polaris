@@ -35,4 +35,4 @@ change.
 | `EchoMsg::Value` | signed echo, round 1 | `value`, `sig` | sender | Ed25519 on `"value:" || value`, tag `echo` | `67 + L` | the drivers' validation protocol |
 | `EchoMsg::Confirm` | signed echo, round 2 | `digest` of the vector of values, `sig` | sender | Ed25519 on `"confirm:" || digest`, tag `echo` | `98` | |
 | `Hello` | network runner, once per connection | `from`, `to`, `run_id`, `sig` | the connecting node | Ed25519 on `nonce || from || to` (32-byte nonce chosen by the acceptor), tag `net/handshake` | `68` | after the handshake nothing is signed per message |
-| `Frame` | network runner, every message | `run_id`, `round`, `payload` | none | | `4 + 2..15 + payload` | 4-byte big-endian length prefix; `round` is the round the message was sent in, which is how late messages are counted |
+| `Frame` | network runner, one per peer and round | `run_id`, `round`, `payloads` | none | | `4 + 2..15 + sum of (1 + payload)` | 4-byte big-endian length prefix; every message of the round for that peer; `round` is the round they were sent in, which is how late messages are counted |

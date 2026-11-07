@@ -46,7 +46,10 @@ Two drivers run the same machines:
   per direction and peer (a nonce signed once at connection time, nothing
   signed per message afterwards, matching the model's authenticated
   channels), runs a wall-clock round schedule from a shared start time, and
-  labels every frame with the round it was sent in. A frame that arrives
+  labels every frame with the round it was sent in; a frame carries every
+  message of that round for that peer, so a round costs `n` system calls
+  per node whatever the protocol sends, and the receiver splits it back
+  into messages. A frame that arrives
   after the end of its round is counted as late and delivered in the round
   it arrived in: a synchrony violation the protocol may or may not survive,
   and the count is what says whether a run was synchronous. It writes
@@ -290,10 +293,7 @@ that record it.
 
 ## Next
 
-The evaluation harness (experiment matrix, launching, collecting the
-metrics, tables and plots), on the runner side one frame per recipient and
-round instead of one per message (the first LearnOrExpose round sends
-`n^2` messages per node, WXSD's Commit phase forwards `n^2` commits of `n`
-votes each, and `n` parallel WXSD at `n = 32` exhausts the memory of a
-single process), then the improvements: accusations shared across views
-and with the WXSD trust graph, and aggregated trust-graph evidence.
+The evaluation harness (experiment matrix, launching one process per
+node, collecting the metrics, tables and plots), then the improvements:
+accusations shared across views and with the WXSD trust graph, and
+aggregated trust-graph evidence.

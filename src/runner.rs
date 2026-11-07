@@ -149,19 +149,23 @@ fn send_all<M: Serialize>(
     out: Vec<polaris_core::Outgoing<M>>,
 ) {
     let n = ctx.params.n;
+    let mut batches: Vec<Vec<Vec<u8>>> = (0..n).map(|_| Vec::new()).collect();
+    let (mut msgs, mut bytes) = (0u64, 0u64);
     for o in out {
         let payload = wire::encode(&o.msg).expect("protocol messages serialize");
-        let recipients: Vec<NodeId> = match o.to {
-            Dest::All => (0..n).map(|j| NodeId::try_from(j).expect("fits")).collect(),
-            Dest::One(j) => vec![j],
+        let recipients: Vec<usize> = match o.to {
+            Dest::All => (0..n).collect(),
+            Dest::One(j) => vec![usize::from(j)],
         };
-        ctx.metrics.sent(
-            recipients.len() as u64,
-            payload.len() as u64 * recipients.len() as u64,
-        );
+        msgs += recipients.len() as u64;
+        bytes += payload.len() as u64 * recipients.len() as u64;
         for to in recipients {
-            transport.send(to, round, payload.clone());
+            batches[to].push(payload.clone());
         }
+    }
+    ctx.metrics.sent(msgs, bytes);
+    for (to, payloads) in batches.into_iter().enumerate() {
+        transport.send_batch(NodeId::try_from(to).expect("fits"), round, payloads);
     }
 }
 
