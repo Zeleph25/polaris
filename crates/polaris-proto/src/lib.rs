@@ -8,6 +8,7 @@
 //! - [`bb`]: the broadcast interface, the Dolev-Strong broadcast, and a naive
 //!   two-round broadcast for the harness.
 //! - [`compiler`]: Algorithm 1, Interactive Consistency from one broadcast per view.
+//! - [`parallel`]: the baseline, `n` parallel broadcasts.
 
 pub mod accusations;
 pub mod bb;
@@ -15,4 +16,5 @@ pub mod compiler;
 pub mod disclosure;
 pub mod echo;
 pub mod learn_or_expose;
+pub mod parallel;
 pub mod trust_graph;

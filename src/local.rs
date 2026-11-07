@@ -12,6 +12,7 @@ use polaris_proto::bb::dolev_strong::DolevStrong;
 use polaris_proto::bb::wxsd::{Wxsd, WxsdConfig};
 use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
+use polaris_proto::parallel::Parallel;
 use polaris_sim::{Node, Simulator, Transcript};
 use serde::Serialize;
 
@@ -95,6 +96,31 @@ impl Machines for IcWxsdMachines {
             keyring.clone(),
             Arc::new(keys.clone()),
             self.config,
+            self.wxsd,
+            ic_input(keys.id),
+        )
+    }
+}
+
+pub struct ParallelDsMachines;
+
+impl Machines for ParallelDsMachines {
+    type M = Parallel<DolevStrong>;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
+        Parallel::with_dolev_strong(keyring.clone(), Arc::new(keys.clone()), ic_input(keys.id))
+    }
+}
+
+pub struct ParallelWxsdMachines {
+    pub wxsd: WxsdConfig,
+}
+
+impl Machines for ParallelWxsdMachines {
+    type M = Parallel<Wxsd>;
+    fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
+        Parallel::with_wxsd(
+            keyring.clone(),
+            Arc::new(keys.clone()),
             self.wxsd,
             ic_input(keys.id),
         )

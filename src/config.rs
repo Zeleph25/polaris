@@ -15,6 +15,8 @@ pub enum Protocol {
     Echo,
     /// Interactive Consistency: the compiler over a broadcast.
     Ic,
+    /// The baseline: n parallel instances of a broadcast.
+    Parallel,
 }
 
 /// The broadcast the compiler runs in each view.
@@ -53,7 +55,7 @@ pub struct NodeConfig {
     pub out_dir: PathBuf,
     #[serde(default)]
     pub protocol: Protocol,
-    /// The broadcast of each view for `ic`.
+    /// The broadcast of each view for `ic`, or of each instance for `parallel`.
     #[serde(default)]
     pub broadcast: BroadcastKind,
     /// Rounds between view starts for `ic`; the default is R.

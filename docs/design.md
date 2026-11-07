@@ -154,6 +154,16 @@ Sub-machines get their own context: they record signature work into it and
 also call `decided`, which must not count as the compiler's decision, so
 the compiler absorbs their counters into its own metrics every round.
 
+## The baseline
+
+`Parallel` (`polaris-proto/src/parallel.rs`) runs `n` instances of a
+broadcast side by side, node `i` the sender of instance `i` with its input,
+all started at round 0, and outputs the vector of what they delivered once
+every instance has. It takes the same broadcast factory as the compiler,
+so `n` parallel Dolev-Strong and `n` parallel WXSD are the two baselines
+the paper compares against, on the same drivers and metrics as the
+compiler.
+
 ## Decisions
 
 Each of these is a choice the paper leaves open or that differs from its
@@ -271,13 +281,19 @@ that record it.
   `(n, t)` up to `(10, 8)`: agreement, every honest input kept, a decision
   no later than the first view with an honest leader, and simultaneous
   termination. The same over WXSD, with decision rounds one apart at most.
+- The baselines (`crates/polaris-proto/tests/parallel.rs`): all honest at
+  the predicted rounds over both broadcasts, and the random omission
+  adversaries: agreement on the whole vector, every honest input in place,
+  termination within one round.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 
 ## Next
 
-The baselines (`n` parallel broadcasts, Dolev-Strong and WXSD), the
-evaluation harness, and on the runner side one frame per recipient and
-round instead of one per message: the first LearnOrExpose round sends
-`n^2` messages per node, and WXSD's Commit phase forwards `n^2` commits of
-`n` votes each.
+The evaluation harness (experiment matrix, launching, collecting the
+metrics, tables and plots), on the runner side one frame per recipient and
+round instead of one per message (the first LearnOrExpose round sends
+`n^2` messages per node, WXSD's Commit phase forwards `n^2` commits of `n`
+votes each, and `n` parallel WXSD at `n = 32` exhausts the memory of a
+single process), then the improvements: accusations shared across views
+and with the WXSD trust graph, and aggregated trust-graph evidence.
