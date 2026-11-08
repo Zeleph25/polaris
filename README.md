@@ -174,9 +174,11 @@ Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 ## Evaluation
 
 `eval/matrix.toml` lists the experiments (protocol, broadcast, sizes,
-repetitions, round length); `eval/run.py` runs them with one process per
-node on this host and `eval/aggregate.py` turns the results into a table
-and plots:
+repetitions, round length, and for runs under attack the adversary);
+`eval/run.py` runs them, with one process per node on this host for the
+honest runs (`mode = "net"`) and in the simulator for the runs with
+Byzantine nodes (`mode = "sim"`), and `eval/aggregate.py` turns the results
+into a table and plots:
 
 ```
 cargo build --release
@@ -193,8 +195,20 @@ verification time, CPU time and peak memory (means per node), late messages,
 and whether every node decided the same output. Python 3.11 or newer;
 matplotlib for the plots.
 
-The matrix as shipped (n up to 32, three repetitions, 500 ms rounds) runs
-in about six minutes on two cores. For several hosts, generate the clusters
+Runs under attack use `polaris sim`, which draws `--byzantine` nodes (at
+most t) from the seed and has them play `--adversary silent` (send
+nothing), `selective` (the honest protocol delivered to a random half of
+the nodes only) or `mixed`; honest nodes get the same files as on the
+network, and the simulator counts rounds, messages, bytes and signature
+work exactly, so only wall-clock time is missing from those rows:
+
+```
+cargo run --release -- sim --protocol ic --broadcast wxsd --n 32 --t 16 --adversary mixed --seed 1 --out runs/sim
+```
+
+The matrix as shipped (n up to 32, three repetitions, 500 ms rounds, the
+four protocols honest and under attack) runs in about seven minutes on two
+cores. For several hosts, generate the clusters
 with `genconfig`, edit the `peers` lists, and start the nodes with any
 remote launcher; the aggregator only needs the `runs/` directories.
 

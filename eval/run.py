@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs an experiment matrix: for every experiment, size and repetition,
-generates a cluster with `polaris genconfig`, starts one `polaris node`
-process per node on this host, waits for all of them, and keeps their
+either generates a cluster with `polaris genconfig` and starts one
+`polaris node` process per node on this host (mode "net", the default), or
+runs `polaris sim` with Byzantine nodes (mode "sim"); then keeps the
 output files together with a run.json describing the run.
 
     eval/run.py eval/matrix.toml --out eval/results [--only ic-wxsd]
@@ -19,9 +20,27 @@ import tomllib
 from pathlib import Path
 
 
-def run_once(binary, exp, n, t, rep, out, defaults, port):
-    d = out / exp["name"] / f"n{n}-t{t}" / f"rep{rep}"
-    d.mkdir(parents=True, exist_ok=True)
+def run_sim(binary, exp, n, t, rep, d, defaults):
+    cmd = [
+        str(binary), "sim",
+        "--protocol", exp["protocol"],
+        "--broadcast", exp.get("broadcast", "dolev-strong"),
+        "--n", str(n), "--t", str(t),
+        "--byzantine", str(exp.get("byzantine", t)),
+        "--adversary", exp.get("adversary", "mixed"),
+        "--seed", str(rep + 1),
+        "--max-rounds", str(exp.get("max_rounds", defaults["max_rounds"])),
+        "--out", str(d / "runs"),
+    ]
+    if "view_spacing" in exp:
+        cmd += ["--view-spacing", str(exp["view_spacing"])]
+    started = time.time()
+    with open(d / "sim.log", "w") as log:
+        code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
+    return [code], time.time() - started
+
+
+def run_net(binary, exp, n, t, rep, d, defaults, port):
     round_ms = exp.get("round_ms", defaults["round_ms"])
     gen = [
         str(binary), "genconfig",
@@ -48,12 +67,25 @@ def run_once(binary, exp, n, t, rep, out, defaults, port):
             stdout=log, stderr=subprocess.STDOUT,
         ))
     codes = [p.wait() for p in procs]
-    elapsed = time.time() - started
+    return codes, time.time() - started
+
+
+def run_once(binary, exp, n, t, rep, out, defaults, port):
+    d = out / exp["name"] / f"n{n}-t{t}" / f"rep{rep}"
+    d.mkdir(parents=True, exist_ok=True)
+    mode = exp.get("mode", "net")
+    if mode == "sim":
+        codes, elapsed = run_sim(binary, exp, n, t, rep, d, defaults)
+    else:
+        codes, elapsed = run_net(binary, exp, n, t, rep, d, defaults, port)
     ok = all(c == 0 for c in codes)
     (d / "run.json").write_text(json.dumps({
-        "experiment": exp["name"], "protocol": exp["protocol"],
+        "experiment": exp["name"], "mode": mode, "protocol": exp["protocol"],
         "broadcast": exp.get("broadcast", "dolev-strong"),
-        "n": n, "t": t, "rep": rep, "round_ms": round_ms,
+        "n": n, "t": t, "rep": rep,
+        "round_ms": exp.get("round_ms", defaults["round_ms"]) if mode == "net" else None,
+        "byzantine": exp.get("byzantine", t) if mode == "sim" else 0,
+        "adversary": exp.get("adversary", "mixed") if mode == "sim" else None,
         "exit_codes": codes, "ok": ok, "wall_s": round(elapsed, 3),
     }, indent=2))
     status = "ok" if ok else f"FAILED {codes}"

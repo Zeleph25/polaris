@@ -14,6 +14,7 @@ use polaris::local::{
 };
 use polaris::net::Transport;
 use polaris::runner::{Outcome, Schedule, run_node};
+use polaris::sim::{AdversaryKind, SimSpec, run_sim};
 use polaris_core::{Params, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
 use polaris_proto::bb::wxsd::WxsdConfig;
@@ -86,6 +87,31 @@ enum Cmd {
     Node {
         #[arg(long)]
         config: PathBuf,
+    },
+    /// Run a protocol in the simulator with Byzantine nodes and write the
+    /// honest nodes' metrics and outputs like a network run.
+    Sim {
+        #[arg(long)]
+        n: usize,
+        #[arg(long)]
+        t: usize,
+        /// Byzantine nodes played (at most t); the default is t.
+        #[arg(long)]
+        byzantine: Option<usize>,
+        #[arg(long, value_enum, default_value_t = AdversaryKind::Mixed)]
+        adversary: AdversaryKind,
+        #[arg(long, value_enum, default_value_t = Protocol::Ic)]
+        protocol: Protocol,
+        #[arg(long, value_enum, default_value_t = BroadcastKind::DolevStrong)]
+        broadcast: BroadcastKind,
+        #[arg(long)]
+        view_spacing: Option<u32>,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 20000)]
+        max_rounds: u32,
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Run an n-node cluster in this process over TCP and check its
     /// per-round inboxes against the simulator.
@@ -291,6 +317,51 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Sim {
+            n,
+            t,
+            byzantine,
+            adversary,
+            protocol,
+            broadcast,
+            view_spacing,
+            seed,
+            max_rounds,
+            out,
+        } => {
+            let spec = SimSpec {
+                n,
+                t,
+                byzantine: byzantine.unwrap_or(t),
+                adversary,
+                max_rounds,
+                seed,
+                run_id: 1,
+            };
+            let config = ic_config(Params::new(n, t)?, view_spacing, None);
+            match (protocol, broadcast) {
+                (Protocol::Echo, _) => sim(&spec, &EchoMachines, &out)?,
+                (Protocol::Ic, BroadcastKind::DolevStrong) => {
+                    sim(&spec, &IcMachines { config }, &out)?;
+                }
+                (Protocol::Ic, BroadcastKind::Wxsd) => {
+                    let machines = IcWxsdMachines {
+                        config,
+                        wxsd: WxsdConfig::default(),
+                    };
+                    sim(&spec, &machines, &out)?;
+                }
+                (Protocol::Parallel, BroadcastKind::DolevStrong) => {
+                    sim(&spec, &ParallelDsMachines, &out)?;
+                }
+                (Protocol::Parallel, BroadcastKind::Wxsd) => {
+                    let machines = ParallelWxsdMachines {
+                        wxsd: WxsdConfig::default(),
+                    };
+                    sim(&spec, &machines, &out)?;
+                }
+            }
+        }
         Cmd::Local {
             n,
             t,
@@ -370,6 +441,36 @@ fn report<O: Serialize>(cfg: &NodeConfig, outcome: &Outcome<O>) -> anyhow::Resul
         cfg.out_dir.display()
     );
     Ok(())
+}
+
+fn sim<F>(spec: &SimSpec, machines: &F, out: &Path) -> anyhow::Result<()>
+where
+    F: Machines,
+    <F::M as RoundMachine>::Output: Clone + Serialize + PartialEq,
+{
+    let result = run_sim(spec, machines)?;
+    result.write_to(out)?;
+    let first = result.outcomes[0].output.as_ref();
+    let agree = result.outcomes.iter().all(|o| o.output.as_ref() == first);
+    let decided: Vec<_> = result.outcomes.iter().map(|o| o.decision_round).collect();
+    let m = result.outcomes[0].metrics.total();
+    println!(
+        "n = {}, t = {}, {} Byzantine ({:?}): honest decision rounds {decided:?}, outputs {}; node {} sent {} msgs / {} B; files in {}",
+        spec.n,
+        spec.t,
+        result.byzantine.len(),
+        spec.adversary,
+        if agree { "identical" } else { "DIFFER" },
+        result.outcomes[0].me,
+        m.msgs_sent,
+        m.bytes_sent,
+        out.display()
+    );
+    if agree {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
 }
 
 /// Runs the cluster, writes the files, prints the summary, and exits with
