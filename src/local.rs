@@ -13,7 +13,10 @@ use polaris_proto::bb::wxsd::{Wxsd, WxsdConfig};
 use polaris_proto::compiler::{Compiler, CompilerConfig};
 use polaris_proto::echo::Echo;
 use polaris_proto::parallel::Parallel;
-use polaris_sim::{Node, Simulator, Transcript};
+use polaris_sim::{Adversary, Node, Simulator, Transcript};
+use rand_chacha::ChaCha12Rng;
+
+use crate::adversaries::DsChaos;
 use serde::Serialize;
 
 use crate::net::Transport;
@@ -42,6 +45,18 @@ pub struct LocalResult<O> {
 pub trait Machines: Send + Sync {
     type M: RoundMachine + Send + 'static;
     fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M;
+
+    /// The Dolev-Strong adversary for this protocol, if it runs
+    /// Dolev-Strong: `byzantine` holds every Byzantine node's keys.
+    fn ds_adversary(
+        &self,
+        _keyring: &Arc<Keyring>,
+        _keys: &NodeKeys,
+        _byzantine: &[Arc<NodeKeys>],
+        _rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        None
+    }
 }
 
 pub fn echo_value(id: NodeId) -> Vec<u8> {
@@ -81,6 +96,22 @@ impl Machines for IcMachines {
             ic_input(keys.id),
         )
     }
+    fn ds_adversary(
+        &self,
+        keyring: &Arc<Keyring>,
+        keys: &NodeKeys,
+        byzantine: &[Arc<NodeKeys>],
+        rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        Some(Box::new(DsChaos::new(
+            self.make(keyring, keys),
+            Arc::new(keys.clone()),
+            byzantine.to_vec(),
+            keyring.run_id,
+            keyring.n(),
+            rng,
+        )))
+    }
 }
 
 /// The IC compiler over WXSD.
@@ -108,6 +139,22 @@ impl Machines for ParallelDsMachines {
     type M = Parallel<DolevStrong>;
     fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
         Parallel::with_dolev_strong(keyring.clone(), Arc::new(keys.clone()), ic_input(keys.id))
+    }
+    fn ds_adversary(
+        &self,
+        keyring: &Arc<Keyring>,
+        keys: &NodeKeys,
+        byzantine: &[Arc<NodeKeys>],
+        rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        Some(Box::new(DsChaos::new(
+            self.make(keyring, keys),
+            Arc::new(keys.clone()),
+            byzantine.to_vec(),
+            keyring.run_id,
+            keyring.n(),
+            rng,
+        )))
     }
 }
 

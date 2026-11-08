@@ -3,6 +3,7 @@
 //! Protocol logic lives in `polaris-proto`; this crate only moves bytes on
 //! time and writes metrics.
 
+pub mod adversaries;
 pub mod config;
 pub mod local;
 pub mod net;
