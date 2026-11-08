@@ -198,9 +198,13 @@ matplotlib for the plots.
 Runs under attack use `polaris sim`, which draws `--byzantine` nodes (at
 most t) from the seed and has them play `--adversary silent` (send
 nothing), `selective` (the honest protocol delivered to a random half of
-the nodes only) or `mixed`; honest nodes get the same files as on the
-network, and the simulator counts rounds, messages, bytes and signature
-work exactly, so only wall-clock time is missing from those rows:
+the nodes only), `mixed`, or `ds-chaos` (Dolev-Strong only: senders
+equivocate with fabricated values, forwarders extend every chain with
+their signature and scatter it, and well-formed chains with garbage
+signatures are flooded so that every honest node verifies and rejects
+them); honest nodes get the same files as on the network, and the
+simulator counts rounds, messages, bytes and signature work exactly, so
+only wall-clock time is missing from those rows:
 
 ```
 cargo run --release -- sim --protocol ic --broadcast wxsd --n 32 --t 16 --adversary mixed --seed 1 --out runs/sim

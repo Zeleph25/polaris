@@ -3,10 +3,11 @@
 //! The simulator measures rounds, messages, bytes and signature work
 //! exactly, so an experiment under attack is run here rather than on the
 //! network, where every node is honest. Byzantine nodes are drawn from a
-//! seed and play one of the generic behaviors: silent, or the honest
-//! protocol delivered to a random subset of the nodes only. Honest nodes
-//! get the same `node-<i>` files as on the network; Byzantine nodes get
-//! none, and `byzantine.json` lists them.
+//! seed and play one of the generic behaviors (silent, or the honest
+//! protocol delivered to a random subset of the nodes only) or a
+//! protocol-specific one from [`crate::adversaries`]. Honest nodes get the
+//! same `node-<i>` files as on the network, with an empty transcript;
+//! Byzantine nodes get none, and `byzantine.json` lists them.
 
 use std::path::Path;
 use std::time::Duration;
@@ -32,6 +33,11 @@ pub enum AdversaryKind {
     Selective,
     /// Each Byzantine node is silent with probability 0.3, selective otherwise.
     Mixed,
+    /// Dolev-Strong only: senders equivocate with fabricated values,
+    /// forwarders extend every chain with their (sometimes forged)
+    /// signature and scatter it, and chains on fresh values are fabricated
+    /// whenever enough Byzantine signers exist.
+    DsChaos,
 }
 
 #[derive(Clone, Debug)]
@@ -57,24 +63,34 @@ fn make_node<F: Machines>(
     machines: &F,
     kr: &std::sync::Arc<Keyring>,
     keys: &NodeKeys,
-    byzantine: bool,
+    byzantine: Option<&[std::sync::Arc<NodeKeys>]>,
     kind: AdversaryKind,
     rng: &mut ChaCha12Rng,
-) -> Node<F::M> {
-    if !byzantine {
-        return Node::Honest(machines.make(kr, keys));
-    }
+) -> anyhow::Result<Node<F::M>> {
+    let Some(byzantine_keys) = byzantine else {
+        return Ok(Node::Honest(machines.make(kr, keys)));
+    };
     let silent = match kind {
         AdversaryKind::Silent => true,
         AdversaryKind::Selective => false,
         AdversaryKind::Mixed => rng.random_bool(0.3),
+        AdversaryKind::DsChaos => {
+            let own = ChaCha12Rng::seed_from_u64(rng.random());
+            return machines
+                .ds_adversary(kr, keys, byzantine_keys, own)
+                .map(Node::Byzantine)
+                .context("the ds-chaos adversary needs a protocol over Dolev-Strong");
+        }
     };
     if silent {
-        Node::Byzantine(Box::new(Silent))
+        Ok(Node::Byzantine(Box::new(Silent)))
     } else {
         let n = kr.n();
         let subset = NodeSet::from_iter(n, (0..n as NodeId).filter(|_| rng.random_bool(0.5)));
-        Node::Byzantine(Box::new(Selective::new(machines.make(kr, keys), subset)))
+        Ok(Node::Byzantine(Box::new(Selective::new(
+            machines.make(kr, keys),
+            subset,
+        ))))
     }
 }
 
@@ -103,6 +119,11 @@ where
     let mut byzantine = ids[..spec.byzantine].to_vec();
     byzantine.sort_unstable();
 
+    let byzantine_keys: Vec<std::sync::Arc<NodeKeys>> = keys
+        .iter()
+        .filter(|k| byzantine.contains(&k.id))
+        .map(|k| std::sync::Arc::new(k.clone()))
+        .collect();
     let nodes = keys
         .iter()
         .map(|k| {
@@ -110,37 +131,31 @@ where
                 machines,
                 &kr,
                 k,
-                byzantine.contains(&k.id),
+                byzantine
+                    .contains(&k.id)
+                    .then_some(byzantine_keys.as_slice()),
                 spec.adversary,
                 &mut rng,
             )
         })
-        .collect();
-    let mut sim = Simulator::new(params, spec.run_id, nodes)?.with_transcript(true);
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut sim = Simulator::new(params, spec.run_id, nodes)?.with_transcript(false);
     let last_round = sim
         .run_until_decided(spec.max_rounds)
         .context("the simulator stalled")?;
     let outputs = sim.outputs();
     let outcomes = (0..spec.n as NodeId)
         .filter(|i| !byzantine.contains(i))
-        .map(|i| {
-            let mut transcript = Transcript::default();
-            for e in sim.transcript().entries() {
-                if e.to == i {
-                    transcript.record(e.clone());
-                }
-            }
-            Outcome {
-                me: i,
-                output: outputs[usize::from(i)].cloned(),
-                decision_round: sim.metrics(i).decision_round(),
-                rounds_run: last_round,
-                metrics: sim.metrics(i).clone(),
-                transcript,
-                decided_after: None,
-                ran_for: Duration::ZERO,
-                resources: Resources::now(),
-            }
+        .map(|i| Outcome {
+            me: i,
+            output: outputs[usize::from(i)].cloned(),
+            decision_round: sim.metrics(i).decision_round(),
+            rounds_run: last_round,
+            metrics: sim.metrics(i).clone(),
+            transcript: Transcript::default(),
+            decided_after: None,
+            ran_for: Duration::ZERO,
+            resources: Resources::now(),
         })
         .collect();
     Ok(SimResult {

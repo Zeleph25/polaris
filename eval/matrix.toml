@@ -68,3 +68,22 @@ adversary = "mixed"
 protocol = "parallel"
 broadcast = "wxsd"
 sizes = [[8, 2], [16, 4]]
+
+# Dolev-Strong under its own attack: equivocating senders, chains extended
+# and forged, fresh values fabricated; costs verifications and bytes.
+
+[[experiment]]
+name = "ic-ds-chaos"
+mode = "sim"
+adversary = "ds-chaos"
+protocol = "ic"
+broadcast = "dolev-strong"
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-ds-chaos"
+mode = "sim"
+adversary = "ds-chaos"
+protocol = "parallel"
+broadcast = "dolev-strong"
+sizes = [[8, 2], [16, 4], [32, 16]]
