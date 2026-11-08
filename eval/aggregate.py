@@ -7,9 +7,10 @@ Each run directory holds the cluster files and a runs/ subdirectory with
 the nodes' metrics, transcript and output files.
 
 Per run: the largest decision round over the nodes, the longest time to
-decision, the mean bytes and messages sent per node, the mean signature
-verification time, CPU time and peak memory per node, and whether every
-node decided the same output. Per experiment and size: mean and standard
+decision (network runs only), the mean bytes and messages sent per node,
+the mean signature verification time, CPU time and peak memory per node
+(for simulator runs, of the one process), and whether every node decided
+the same output. Simulator runs report the honest nodes only. Per experiment and size: mean and standard
 deviation over the repetitions. Writes summary.csv and summary.md next to
 the runs and, with --plots and matplotlib, one PNG per metric.
 """
@@ -60,6 +61,7 @@ def read_run(d):
         return None
     return {
         **meta,
+        "nodes": len(rows),
         "agreement": len(outputs) == 1,
         "decision_round": max(r["decision_round"] for r in rows),
         "decided_after_ms": max(r["decided_after_ms"] or 0 for r in rows),
@@ -87,14 +89,16 @@ def main():
             continue
         groups[(r["experiment"], r["n"], r["t"])].append(r)
 
-    header = ["experiment", "protocol", "broadcast", "n", "t", "reps", "agreement"]
+    header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "byzantine", "reps", "agreement"]
     for key, _ in METRICS:
         header += [f"{key}_mean", f"{key}_std"]
     table = []
     for (exp, n, t), runs in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         row = {
-            "experiment": exp, "protocol": runs[0]["protocol"], "broadcast": runs[0]["broadcast"],
-            "n": n, "t": t, "reps": len(runs), "agreement": all(r["agreement"] for r in runs),
+            "experiment": exp, "mode": runs[0].get("mode", "net"),
+            "protocol": runs[0]["protocol"], "broadcast": runs[0]["broadcast"],
+            "n": n, "t": t, "byzantine": runs[0].get("byzantine", 0),
+            "reps": len(runs), "agreement": all(r["agreement"] for r in runs),
         }
         for key, _ in METRICS:
             vals = [r[key] for r in runs]
@@ -107,10 +111,11 @@ def main():
         w.writeheader()
         w.writerows(table)
 
-    lines = ["| experiment | n | t | reps | agree | " + " | ".join(label for _, label in METRICS) + " |",
-             "| --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
+    lines = ["| experiment | mode | n | t | byz | reps | agree | " + " | ".join(label for _, label in METRICS) + " |",
+             "| --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
     for row in table:
-        cells = [row["experiment"], str(row["n"]), str(row["t"]), str(row["reps"]), "yes" if row["agreement"] else "NO"]
+        cells = [row["experiment"], row["mode"], str(row["n"]), str(row["t"]), str(row["byzantine"]),
+                 str(row["reps"]), "yes" if row["agreement"] else "NO"]
         for key, _ in METRICS:
             m, s = row[f"{key}_mean"], row[f"{key}_std"]
             cells.append(f"{m:,.0f} +- {s:,.0f}" if s else f"{m:,.0f}")

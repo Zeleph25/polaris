@@ -291,13 +291,15 @@ that record it.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 - The evaluation harness (`eval/`): the experiment matrix run with one
-  process per node, aggregated into tables and plots; `run.json` per run
-  records the exit codes, and the aggregator checks that every node of a
-  run decided the same output.
+  process per node for the honest runs and in the simulator with Byzantine
+  nodes for the runs under attack, aggregated into tables and plots;
+  `run.json` per run records the exit codes, and the aggregator checks that
+  every (honest) node of a run decided the same output.
 
 ## Next
 
-Experiments on more than one host and under adversaries on the network,
-the honest-majority reference implementations from the project brief, and
-the improvements: accusations shared across views and with the WXSD trust
-graph, and aggregated trust-graph evidence.
+Experiments on more than one host, protocol-specific adversaries in the
+harness (the simulator has generic ones; the tests have the targeted
+ones), the honest-majority reference implementations from the project
+brief, and the improvements: accusations shared across views and with the
+WXSD trust graph, and aggregated trust-graph evidence.
