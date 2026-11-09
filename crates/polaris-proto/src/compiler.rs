@@ -43,7 +43,11 @@ use crate::learn_or_expose::{LearnOrExpose, LoeMsg};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompilerConfig {
     /// Rounds between the starts of two consecutive views. The default is
-    /// `R`, so that at most one LearnOrExpose instance runs at a time.
+    /// `R`, so that at most one LearnOrExpose instance runs at a time. `0`
+    /// makes the views sequential: the next one starts only once the
+    /// previous one's broadcast has delivered without a decision, which
+    /// spares the work of views that never get used when the leader is
+    /// honest and costs a whole view of latency when it is not.
     pub view_spacing: u32,
     /// Views started at most; a run that exhausts them never decides.
     pub max_views: View,
@@ -57,10 +61,14 @@ impl CompilerConfig {
         }
     }
 
+    /// `c`, or `0` for sequential views.
     pub fn with_view_spacing(mut self, c: u32) -> Self {
-        assert!(c >= 1, "views need a spacing of at least one round");
         self.view_spacing = c;
         self
+    }
+
+    pub fn sequential(self) -> Self {
+        self.with_view_spacing(0)
     }
 
     pub fn with_max_views(mut self, views: View) -> Self {
@@ -210,10 +218,18 @@ impl<B: Broadcast> Compiler<B> {
         self.keyring.prf().leader(view, self.keyring.n())
     }
 
-    /// The first LearnOrExpose round of `view`: round 0 is the disclosure
-    /// round, view 1 starts at round 1.
-    fn loe_start(&self, view: View) -> Round {
-        self.first_round.expect("started") + 1 + (view - 1) * self.config.view_spacing
+    /// Whether `view` starts at `round + 1`: round 0 is the disclosure
+    /// round, view 1 starts at round 1, later views `c` rounds apart, or
+    /// right after the previous view's broadcast when views are sequential.
+    fn starts_next_round(&self, view: View, round: Round) -> bool {
+        let since = round + 1 - self.first_round.expect("started");
+        if view == 1 {
+            return since == 1;
+        }
+        match self.config.view_spacing {
+            0 => self.views.is_empty() && self.results.is_empty(),
+            c => since >= 1 && (since - 1).is_multiple_of(c),
+        }
     }
 
     /// Keeps the first valid disclosure per sender. Everything is verified
@@ -253,7 +269,7 @@ impl<B: Broadcast> Compiler<B> {
         }
     }
 
-    fn start_view(&mut self, view: View) -> Vec<Outgoing<IcMsg<B::Msg>>> {
+    fn start_view(&mut self, view: View, round: Round) -> Vec<Outgoing<IcMsg<B::Msg>>> {
         let leader = self.leader(view);
         let mut loe = LearnOrExpose::new(
             self.keyring.clone(),
@@ -266,7 +282,7 @@ impl<B: Broadcast> Compiler<B> {
             view,
             ViewState {
                 leader,
-                loe_start: self.loe_start(view),
+                loe_start: round + 1,
                 phase: Phase::Loe(Box::new(loe)),
             },
         );
@@ -339,7 +355,7 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
         if self.halted {
             return vec![];
         }
-        let r0 = *self.first_round.get_or_insert(round);
+        self.first_round.get_or_insert(round);
 
         let mut discs = Vec::new();
         let mut loe_in: BTreeMap<View, Vec<(NodeId, LoeMsg)>> = BTreeMap::new();
@@ -406,12 +422,8 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
 
         if self.output.is_none() {
             let next = self.stats.views_started + 1;
-            let since = round + 1 - r0;
-            if next <= self.config.max_views
-                && since >= 1
-                && (since - 1).is_multiple_of(self.config.view_spacing)
-            {
-                out.extend(self.start_view(next));
+            if next <= self.config.max_views && self.starts_next_round(next, round) {
+                out.extend(self.start_view(next, round));
             }
         }
 

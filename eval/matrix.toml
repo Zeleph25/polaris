@@ -148,3 +148,71 @@ broadcast = "dolev-strong"
 input_bytes = 10240
 sizes = [[8, 2], [16, 4]]
 
+# Sequential views (view_spacing = 0): the next view starts only when the
+# previous broadcast delivered without a decision. No work on views that
+# never get used when the leader is honest, a whole view of latency when
+# it is not.
+
+[[experiment]]
+name = "ic-wxsd-seq"
+protocol = "ic"
+broadcast = "wxsd"
+view_spacing = 0
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-ds-seq"
+protocol = "ic"
+broadcast = "dolev-strong"
+view_spacing = 0
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd-1k-seq"
+protocol = "ic"
+broadcast = "wxsd"
+view_spacing = 0
+input_bytes = 1024
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-ds-1k-seq"
+protocol = "ic"
+broadcast = "dolev-strong"
+view_spacing = 0
+input_bytes = 1024
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd-10k-seq"
+protocol = "ic"
+broadcast = "wxsd"
+view_spacing = 0
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "ic-ds-10k-seq"
+protocol = "ic"
+broadcast = "dolev-strong"
+view_spacing = 0
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "ic-wxsd-attack-seq"
+mode = "sim"
+adversary = "mixed"
+protocol = "ic"
+broadcast = "wxsd"
+view_spacing = 0
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-ds-chaos-seq"
+mode = "sim"
+adversary = "ds-chaos"
+protocol = "ic"
+broadcast = "dolev-strong"
+view_spacing = 0
+sizes = [[8, 2], [16, 4], [32, 16]]

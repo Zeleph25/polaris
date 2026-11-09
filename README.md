@@ -113,7 +113,10 @@ cargo run --release -- node --config cluster/node-0.toml   # and node-1, node-2,
 cargo run --release -- keygen --n 8 --t 4 --out keys
 ```
 
-`--view-spacing` sets `c` for `ic` (default R). `genconfig` writes
+`--view-spacing` sets `c` for `ic` (default R; `0` makes the views
+sequential, the next starting only when the previous broadcast delivered
+without a decision) and `--input-bytes` the size of every node's input
+(default: the short label `input-of-<i>`). `genconfig` writes
 `keyring.toml` (every node's public keys and proofs of possession),
 `node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
 addresses, the round length, the shared wall-clock start of round 0, the
@@ -168,6 +171,24 @@ and nothing beats it; the compiler's advantage is against n parallel WXSD,
 where it sends an order of magnitude fewer bytes (27 times fewer at
 n = 32, a run that needs 5.6 GB for the 32 nodes of one process), and in
 adversarial runs, which the simulator measures.
+
+Input size changes the picture. At 10 KB inputs and n = 16, bytes sent per
+node, all honest:
+
+| | pipelined views (c = R) | sequential views (c = 0) | n parallel |
+| --- | --- | --- | --- |
+| over Dolev-Strong | 13.4 MB | 5.4 MB | 2.7 MB |
+| over WXSD | 19.7 MB | 6.1 MB | 10.7 MB |
+
+With pipelining, views 2 and 3 start while view 1 is about to succeed, and
+every view's LearnOrExpose sends all `n` disclosures it holds to everyone
+(`n^2 L` bytes per node, the paper's lines 3 to 5); the decision round is
+the same either way. What remains with sequential views is one such round
+plus the vector forwarded once by every node (another `n^2 L`), which is
+twice what n parallel Dolev-Strong sends when nobody attacks. Under the
+Dolev-Strong attack at n = 32, sequential views decide in 29 +- 13 rounds
+against 24 +- 3 pipelined: a whole view of latency per Byzantine leader,
+for a third of the bytes.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 
