@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """Runs an experiment matrix: for every experiment, size and repetition,
 either generates a cluster with `polaris genconfig` and starts one
-`polaris node` process per node on this host (mode "net", the default), or
-runs `polaris sim` with Byzantine nodes (mode "sim"); then keeps the
-output files together with a run.json describing the run.
+`polaris node` process per node (mode "net", the default), or runs
+`polaris sim` with Byzantine nodes (mode "sim"); then keeps the output
+files together with a run.json describing the run.
 
     eval/run.py eval/matrix.toml --out eval/results [--only ic-wxsd]
 
-The binary is target/release/polaris unless --binary says otherwise; build
-it first with `cargo build --release`.
+Network runs stay on this host unless the matrix has a [hosts] table:
+
+    [hosts]
+    list = ["adam@lab1", "adam@lab2", "adam@lab3"]   # ssh targets
+    workdir = "polaris-eval"                          # under the remote home
+    binary = "polaris-eval/polaris"                   # the remote binary
+
+Then node i runs on the i-th host round robin: the run's cluster directory
+is pushed to every host with rsync, each host's nodes are started by one
+ssh session that waits for them, and the runs/ directories and logs come
+back with rsync. The hosts need the binary built for them, reachable ports
+from base_port up, and clocks synchronized (chrony or ntp) to well within
+one round; give start_in_s enough room for the copies and the ssh startup.
+
+The local binary is target/release/polaris unless --binary says
+otherwise; build it first with `cargo build --release`.
 """
 
 import argparse
@@ -41,7 +55,12 @@ def run_sim(binary, exp, n, t, rep, d, defaults):
     return [code], time.time() - started
 
 
-def run_net(binary, exp, n, t, rep, d, defaults, port):
+def host_name(target):
+    """`user@host` -> `host`, for the peer addresses."""
+    return target.split("@", 1)[-1]
+
+
+def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools):
     round_ms = exp.get("round_ms", defaults["round_ms"])
     gen = [
         str(binary), "genconfig",
@@ -51,40 +70,67 @@ def run_net(binary, exp, n, t, rep, d, defaults, port):
         "--out", str(d),
         "--base-port", str(port),
         "--round-ms", str(round_ms),
-        "--start-in-s", str(exp.get("start_in_s", defaults["start_in_s"])),
+        "--start-in-s", str(exp.get("start_in_s", defaults["start_in_s"] if not hosts else max(defaults["start_in_s"], 20))),
         "--max-rounds", str(exp.get("max_rounds", defaults["max_rounds"])),
         "--seed", str(rep + 1),
         "--input-bytes", str(exp.get("input_bytes", 0)),
     ]
     if "view_spacing" in exp:
         gen += ["--view-spacing", str(exp["view_spacing"])]
+    if hosts:
+        gen += ["--hosts", ",".join(host_name(h) for h in hosts["list"])]
     subprocess.run(gen, check=True, capture_output=True)
 
     started = time.time()
-    procs = []
-    for i in range(n):
-        log = open(d / f"node-{i}.log", "w")
-        procs.append(subprocess.Popen(
-            [str(binary), "node", "--config", str(d / f"node-{i}.toml")],
-            stdout=log, stderr=subprocess.STDOUT,
-        ))
-    codes = [p.wait() for p in procs]
+    if not hosts:
+        procs = []
+        for i in range(n):
+            log = open(d / f"node-{i}.log", "w")
+            procs.append(subprocess.Popen(
+                [str(binary), "node", "--config", str(d / f"node-{i}.toml")],
+                stdout=log, stderr=subprocess.STDOUT,
+            ))
+        codes = [p.wait() for p in procs]
+        return codes, time.time() - started
+
+    targets = hosts["list"]
+    remote = f"{hosts.get('workdir', 'polaris-eval')}/{d.parent.parent.name}-{d.parent.name}-{d.name}"
+    rbin = hosts.get("binary", "polaris-eval/polaris")
+    if not rbin.startswith("/"):
+        rbin = f"~/{rbin}"
+    for h in targets:
+        subprocess.run([tools["rsync"], "-az", "--delete", f"{d}/", f"{h}:{remote}/"], check=True)
+    sessions = []
+    for k, h in enumerate(targets):
+        ids = [i for i in range(n) if i % len(targets) == k]
+        if not ids:
+            continue
+        launch = " ".join(
+            f"{rbin} node --config node-{i}.toml > node-{i}.log 2>&1 & " for i in ids)
+        script = f"cd ~/{remote} || exit 1; {launch} wait"
+        sessions.append(subprocess.Popen([tools["ssh"], h, script]))
+    codes = [p.wait() for p in sessions]
+    for h in targets:
+        subprocess.run([tools["rsync"], "-az", f"{h}:{remote}/runs/", f"{d}/runs/"], check=True)
+        subprocess.run([tools["rsync"], "-az", "--include=node-*.log", "--exclude=*",
+                        f"{h}:{remote}/", f"{d}/"], check=True)
     return codes, time.time() - started
 
 
-def run_once(binary, exp, n, t, rep, out, defaults, port):
+def run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
     d = out / exp["name"] / f"n{n}-t{t}" / f"rep{rep}"
     d.mkdir(parents=True, exist_ok=True)
     mode = exp.get("mode", "net")
     if mode == "sim":
         codes, elapsed = run_sim(binary, exp, n, t, rep, d, defaults)
     else:
-        codes, elapsed = run_net(binary, exp, n, t, rep, d, defaults, port)
+        codes, elapsed = run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools)
     ok = all(c == 0 for c in codes)
     (d / "run.json").write_text(json.dumps({
         "experiment": exp["name"], "mode": mode, "protocol": exp["protocol"],
         "broadcast": exp.get("broadcast", "dolev-strong"),
         "n": n, "t": t, "rep": rep, "input_bytes": exp.get("input_bytes", 0),
+        "hosts": [host_name(h) for h in hosts["list"]] if (hosts and mode == "net") else ["localhost"],
         "round_ms": exp.get("round_ms", defaults["round_ms"]) if mode == "net" else None,
         "byzantine": exp.get("byzantine", t) if mode == "sim" else 0,
         "adversary": exp.get("adversary", "mixed") if mode == "sim" else None,
@@ -101,6 +147,8 @@ def main():
     ap.add_argument("--out", default="eval/results")
     ap.add_argument("--binary", default="target/release/polaris")
     ap.add_argument("--only", help="run only the experiment with this name")
+    ap.add_argument("--ssh", default="ssh", help="the ssh command (for tests)")
+    ap.add_argument("--rsync", default="rsync", help="the rsync command (for tests)")
     args = ap.parse_args()
 
     matrix = tomllib.loads(Path(args.matrix).read_text())
@@ -114,6 +162,8 @@ def main():
     if not binary.exists():
         sys.exit(f"{binary} not found; run cargo build --release")
     out = Path(args.out)
+    hosts = matrix.get("hosts")
+    tools = {"ssh": args.ssh, "rsync": args.rsync}
     port = defaults["base_port"]
     failures = 0
     for exp in matrix["experiment"]:
@@ -121,7 +171,7 @@ def main():
             continue
         for n, t in exp["sizes"]:
             for rep in range(exp.get("reps", defaults["reps"])):
-                if not run_once(binary, exp, n, t, rep, out, defaults, port):
+                if not run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
                     failures += 1
                 # A fresh port range per run keeps lingering sockets out of the way.
                 port += n

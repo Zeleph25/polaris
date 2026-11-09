@@ -49,7 +49,8 @@ enum Cmd {
         out: PathBuf,
     },
     /// Write keys and node configs for an n-node cluster on one host
-    /// (`polaris node --config <out>/node-<i>.toml` in n terminals).
+    /// (`polaris node --config <out>/node-<i>.toml` in n terminals), or on
+    /// several hosts with `--hosts`.
     Genconfig {
         #[arg(long)]
         n: usize,
@@ -61,8 +62,13 @@ enum Cmd {
         seed: u64,
         #[arg(long)]
         out: PathBuf,
+        /// The one host every node runs on.
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
+        /// Several hosts, comma-separated: node i runs on the i-th of them
+        /// round robin, listening on all interfaces.
+        #[arg(long, value_delimiter = ',')]
+        hosts: Vec<String>,
         #[arg(long, default_value_t = 7000)]
         base_port: u16,
         #[arg(long, default_value_t = 200)]
@@ -225,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
             seed,
             out,
             host,
+            hosts,
             base_port,
             round_ms,
             start_in_s,
@@ -239,8 +246,11 @@ async fn main() -> anyhow::Result<()> {
             let last_port = base_port
                 .checked_add(u16::try_from(n.saturating_sub(1))?)
                 .context("port range exceeds 65535")?;
+            let hosts = if hosts.is_empty() { vec![host] } else { hosts };
+            let spread = hosts.len() > 1;
             let peers: Vec<String> = (base_port..=last_port)
-                .map(|port| format!("{host}:{port}"))
+                .enumerate()
+                .map(|(i, port)| format!("{}:{port}", hosts[i % hosts.len()]))
                 .collect();
             let start_at_unix_ms = unix_ms_from_now(Duration::from_secs(start_in_s));
             for i in 0..n {
@@ -249,6 +259,7 @@ async fn main() -> anyhow::Result<()> {
                     keyring: "keyring.toml".into(),
                     secret: format!("node-{i}.secret.toml").into(),
                     peers: peers.clone(),
+                    listen: spread.then(|| format!("0.0.0.0:{}", base_port + i as u16)),
                     round_ms,
                     start_at_unix_ms,
                     max_rounds,
@@ -278,9 +289,9 @@ async fn main() -> anyhow::Result<()> {
             let addrs = cfg
                 .peers
                 .iter()
-                .map(|p| p.parse().with_context(|| format!("peer address {p}")))
+                .map(|p| resolve(p))
                 .collect::<anyhow::Result<Vec<std::net::SocketAddr>>>()?;
-            let listener = Transport::bind(&cfg.peers[usize::from(cfg.id)]).await?;
+            let listener = Transport::bind(cfg.listen()).await?;
             tracing::info!(node = cfg.id, n = kr.n(), "connecting to peers");
             let transport = Transport::connect(
                 keys.clone(),
@@ -368,6 +379,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `host:port` to a socket address, resolving a host name (IPv4 first).
+fn resolve(peer: &str) -> anyhow::Result<std::net::SocketAddr> {
+    use std::net::ToSocketAddrs as _;
+    let mut found = peer
+        .to_socket_addrs()
+        .with_context(|| format!("peer address {peer}"))?
+        .collect::<Vec<_>>();
+    found.sort_by_key(|a| !a.is_ipv4());
+    found
+        .into_iter()
+        .next()
+        .with_context(|| format!("peer address {peer} resolves to nothing"))
 }
 
 fn ic_config(params: Params, view_spacing: Option<u32>, max_views: Option<u32>) -> CompilerConfig {
