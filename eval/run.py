@@ -30,6 +30,7 @@ def run_sim(binary, exp, n, t, rep, d, defaults):
         "--adversary", exp.get("adversary", "mixed"),
         "--seed", str(rep + 1),
         "--max-rounds", str(exp.get("max_rounds", defaults["max_rounds"])),
+        "--input-bytes", str(exp.get("input_bytes", 0)),
         "--out", str(d / "runs"),
     ]
     if "view_spacing" in exp:
@@ -53,6 +54,7 @@ def run_net(binary, exp, n, t, rep, d, defaults, port):
         "--start-in-s", str(exp.get("start_in_s", defaults["start_in_s"])),
         "--max-rounds", str(exp.get("max_rounds", defaults["max_rounds"])),
         "--seed", str(rep + 1),
+        "--input-bytes", str(exp.get("input_bytes", 0)),
     ]
     if "view_spacing" in exp:
         gen += ["--view-spacing", str(exp["view_spacing"])]
@@ -82,7 +84,7 @@ def run_once(binary, exp, n, t, rep, out, defaults, port):
     (d / "run.json").write_text(json.dumps({
         "experiment": exp["name"], "mode": mode, "protocol": exp["protocol"],
         "broadcast": exp.get("broadcast", "dolev-strong"),
-        "n": n, "t": t, "rep": rep,
+        "n": n, "t": t, "rep": rep, "input_bytes": exp.get("input_bytes", 0),
         "round_ms": exp.get("round_ms", defaults["round_ms"]) if mode == "net" else None,
         "byzantine": exp.get("byzantine", t) if mode == "sim" else 0,
         "adversary": exp.get("adversary", "mixed") if mode == "sim" else None,

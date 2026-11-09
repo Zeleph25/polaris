@@ -2,7 +2,8 @@
 # sizes `reps` times, either with one process per node on this host (mode
 # "net", all nodes honest) or in the simulator with Byzantine nodes (mode
 # "sim": `byzantine` of them, default t, playing `adversary`: silent,
-# selective or mixed). Results go to <out>/<name>/n<n>-t<t>/rep<k>/.
+# selective, mixed or ds-chaos). `input_bytes` sets every node's input
+# size (0: the short label). Results go to <out>/<name>/n<n>-t<t>/rep<k>/.
 
 [defaults]
 round_ms = 500
@@ -87,3 +88,63 @@ adversary = "ds-chaos"
 protocol = "parallel"
 broadcast = "dolev-strong"
 sizes = [[8, 2], [16, 4], [32, 16]]
+
+# Input size: one vector per view against n values, with 1 KB and 10 KB
+# inputs (all honest, on the network).
+
+[[experiment]]
+name = "ic-wxsd-1k"
+protocol = "ic"
+broadcast = "wxsd"
+input_bytes = 1024
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-wxsd-1k"
+protocol = "parallel"
+broadcast = "wxsd"
+input_bytes = 1024
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "ic-ds-1k"
+protocol = "ic"
+broadcast = "dolev-strong"
+input_bytes = 1024
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-ds-1k"
+protocol = "parallel"
+broadcast = "dolev-strong"
+input_bytes = 1024
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd-10k"
+protocol = "ic"
+broadcast = "wxsd"
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "parallel-wxsd-10k"
+protocol = "parallel"
+broadcast = "wxsd"
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "ic-ds-10k"
+protocol = "ic"
+broadcast = "dolev-strong"
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+
+[[experiment]]
+name = "parallel-ds-10k"
+protocol = "parallel"
+broadcast = "dolev-strong"
+input_bytes = 10240
+sizes = [[8, 2], [16, 4]]
+

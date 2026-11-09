@@ -89,7 +89,7 @@ def main():
             continue
         groups[(r["experiment"], r["n"], r["t"])].append(r)
 
-    header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "byzantine", "reps", "agreement"]
+    header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "input_bytes", "byzantine", "reps", "agreement"]
     for key, _ in METRICS:
         header += [f"{key}_mean", f"{key}_std"]
     table = []
@@ -97,7 +97,8 @@ def main():
         row = {
             "experiment": exp, "mode": runs[0].get("mode", "net"),
             "protocol": runs[0]["protocol"], "broadcast": runs[0]["broadcast"],
-            "n": n, "t": t, "byzantine": runs[0].get("byzantine", 0),
+            "n": n, "t": t, "input_bytes": runs[0].get("input_bytes", 0),
+            "byzantine": runs[0].get("byzantine", 0),
             "reps": len(runs), "agreement": all(r["agreement"] for r in runs),
         }
         for key, _ in METRICS:
@@ -111,11 +112,11 @@ def main():
         w.writeheader()
         w.writerows(table)
 
-    lines = ["| experiment | mode | n | t | byz | reps | agree | " + " | ".join(label for _, label in METRICS) + " |",
-             "| --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
+    lines = ["| experiment | mode | n | t | input B | byz | reps | agree | " + " | ".join(label for _, label in METRICS) + " |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
     for row in table:
-        cells = [row["experiment"], row["mode"], str(row["n"]), str(row["t"]), str(row["byzantine"]),
-                 str(row["reps"]), "yes" if row["agreement"] else "NO"]
+        cells = [row["experiment"], row["mode"], str(row["n"]), str(row["t"]), str(row["input_bytes"]),
+                 str(row["byzantine"]), str(row["reps"]), "yes" if row["agreement"] else "NO"]
         for key, _ in METRICS:
             m, s = row[f"{key}_mean"], row[f"{key}_std"]
             cells.append(f"{m:,.0f} +- {s:,.0f}" if s else f"{m:,.0f}")

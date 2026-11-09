@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use polaris::config::{BroadcastKind, NodeConfig, Protocol, unix_ms_from_now};
 use polaris::local::{
     EchoMachines, IcMachines, IcWxsdMachines, LocalSpec, Machines, ParallelDsMachines,
-    ParallelWxsdMachines, compare_with_simulator, echo_value, ic_input, run_local,
+    ParallelWxsdMachines, compare_with_simulator, run_local,
 };
 use polaris::net::Transport;
 use polaris::runner::{Outcome, Schedule, run_node};
@@ -18,9 +18,7 @@ use polaris::sim::{AdversaryKind, SimSpec, run_sim};
 use polaris_core::{Params, RoundMachine};
 use polaris_crypto::keyring::{self, Keyring, NodeKeys};
 use polaris_proto::bb::wxsd::WxsdConfig;
-use polaris_proto::compiler::{Compiler, CompilerConfig};
-use polaris_proto::echo::Echo;
-use polaris_proto::parallel::Parallel;
+use polaris_proto::compiler::CompilerConfig;
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
@@ -82,6 +80,9 @@ enum Cmd {
         /// Rounds between view starts (`ic` only); the default is R.
         #[arg(long)]
         view_spacing: Option<u32>,
+        /// Input size in bytes; 0 means the short label `input-of-<i>`.
+        #[arg(long, default_value_t = 0)]
+        input_bytes: usize,
     },
     /// Run one node from a config file.
     Node {
@@ -110,6 +111,8 @@ enum Cmd {
         seed: u64,
         #[arg(long, default_value_t = 20000)]
         max_rounds: u32,
+        #[arg(long, default_value_t = 0)]
+        input_bytes: usize,
         #[arg(long)]
         out: PathBuf,
     },
@@ -132,6 +135,8 @@ enum Cmd {
         view_spacing: Option<u32>,
         #[arg(long, default_value_t = 200)]
         max_rounds: u32,
+        #[arg(long, default_value_t = 0)]
+        input_bytes: usize,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -151,6 +156,47 @@ fn write_keys(
         k.save(&out.join(format!("node-{}.secret.toml", k.id)))?;
     }
     Ok((kr, keys))
+}
+
+/// Picks the machines of a protocol and broadcast and runs `$body` with
+/// them bound to `$m`; the one place that knows every combination.
+macro_rules! with_machines {
+    ($protocol:expr, $broadcast:expr, $config:expr, $input_bytes:expr, |$m:ident| $body:block) => {
+        match ($protocol, $broadcast) {
+            (Protocol::Echo, _) => {
+                let $m = EchoMachines;
+                $body
+            }
+            (Protocol::Ic, BroadcastKind::DolevStrong) => {
+                let $m = IcMachines {
+                    config: $config,
+                    input_bytes: $input_bytes,
+                };
+                $body
+            }
+            (Protocol::Ic, BroadcastKind::Wxsd) => {
+                let $m = IcWxsdMachines {
+                    config: $config,
+                    wxsd: WxsdConfig::default(),
+                    input_bytes: $input_bytes,
+                };
+                $body
+            }
+            (Protocol::Parallel, BroadcastKind::DolevStrong) => {
+                let $m = ParallelDsMachines {
+                    input_bytes: $input_bytes,
+                };
+                $body
+            }
+            (Protocol::Parallel, BroadcastKind::Wxsd) => {
+                let $m = ParallelWxsdMachines {
+                    wxsd: WxsdConfig::default(),
+                    input_bytes: $input_bytes,
+                };
+                $body
+            }
+        }
+    };
 }
 
 #[tokio::main]
@@ -186,6 +232,7 @@ async fn main() -> anyhow::Result<()> {
             protocol,
             broadcast,
             view_spacing,
+            input_bytes,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -211,6 +258,7 @@ async fn main() -> anyhow::Result<()> {
                     out_dir: "runs".into(),
                     protocol,
                     broadcast,
+                    input_bytes,
                     view_spacing,
                     max_views: None,
                 };
@@ -259,63 +307,12 @@ async fn main() -> anyhow::Result<()> {
                 linger_rounds: cfg.linger_rounds,
             };
             tracing::info!(node = cfg.id, "connected; waiting for round 0");
-            match cfg.protocol {
-                Protocol::Echo => {
-                    let machine = Echo::new(
-                        kr.clone(),
-                        Arc::new(keys.ed25519.clone()),
-                        echo_value(cfg.id),
-                    );
-                    let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
-                    report(&cfg, &outcome)?;
-                }
-                Protocol::Parallel => match cfg.broadcast {
-                    BroadcastKind::DolevStrong => {
-                        let machine =
-                            Parallel::with_dolev_strong(kr.clone(), keys.clone(), ic_input(cfg.id));
-                        let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
-                        report(&cfg, &outcome)?;
-                    }
-                    BroadcastKind::Wxsd => {
-                        let machine = Parallel::with_wxsd(
-                            kr.clone(),
-                            keys.clone(),
-                            WxsdConfig::default(),
-                            ic_input(cfg.id),
-                        );
-                        let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
-                        report(&cfg, &outcome)?;
-                    }
-                },
-                Protocol::Ic => {
-                    let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
-                    match cfg.broadcast {
-                        BroadcastKind::DolevStrong => {
-                            let machine = Compiler::with_dolev_strong(
-                                kr.clone(),
-                                keys.clone(),
-                                config,
-                                ic_input(cfg.id),
-                            );
-                            let outcome =
-                                run_node(cfg.id, &schedule, transport, start, machine).await;
-                            report(&cfg, &outcome)?;
-                        }
-                        BroadcastKind::Wxsd => {
-                            let machine = Compiler::with_wxsd(
-                                kr.clone(),
-                                keys.clone(),
-                                config,
-                                WxsdConfig::default(),
-                                ic_input(cfg.id),
-                            );
-                            let outcome =
-                                run_node(cfg.id, &schedule, transport, start, machine).await;
-                            report(&cfg, &outcome)?;
-                        }
-                    }
-                }
-            }
+            let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
+            with_machines!(cfg.protocol, cfg.broadcast, config, cfg.input_bytes, |m| {
+                let machine = m.make(&kr, &keys);
+                let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                report(&cfg, &outcome)?;
+            });
         }
         Cmd::Sim {
             n,
@@ -327,6 +324,7 @@ async fn main() -> anyhow::Result<()> {
             view_spacing,
             seed,
             max_rounds,
+            input_bytes,
             out,
         } => {
             let spec = SimSpec {
@@ -339,28 +337,9 @@ async fn main() -> anyhow::Result<()> {
                 run_id: 1,
             };
             let config = ic_config(Params::new(n, t)?, view_spacing, None);
-            match (protocol, broadcast) {
-                (Protocol::Echo, _) => sim(&spec, &EchoMachines, &out)?,
-                (Protocol::Ic, BroadcastKind::DolevStrong) => {
-                    sim(&spec, &IcMachines { config }, &out)?;
-                }
-                (Protocol::Ic, BroadcastKind::Wxsd) => {
-                    let machines = IcWxsdMachines {
-                        config,
-                        wxsd: WxsdConfig::default(),
-                    };
-                    sim(&spec, &machines, &out)?;
-                }
-                (Protocol::Parallel, BroadcastKind::DolevStrong) => {
-                    sim(&spec, &ParallelDsMachines, &out)?;
-                }
-                (Protocol::Parallel, BroadcastKind::Wxsd) => {
-                    let machines = ParallelWxsdMachines {
-                        wxsd: WxsdConfig::default(),
-                    };
-                    sim(&spec, &machines, &out)?;
-                }
-            }
+            with_machines!(protocol, broadcast, config, input_bytes, |m| {
+                sim(&spec, &m, &out)?;
+            });
         }
         Cmd::Local {
             n,
@@ -371,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
             broadcast,
             view_spacing,
             max_rounds,
+            input_bytes,
             out,
         } => {
             let spec = LocalSpec {
@@ -381,35 +361,10 @@ async fn main() -> anyhow::Result<()> {
                 seed,
                 run_id: 1,
             };
-            match protocol {
-                Protocol::Echo => local(&spec, &EchoMachines, out.as_deref()).await?,
-                Protocol::Parallel => match broadcast {
-                    BroadcastKind::DolevStrong => {
-                        local(&spec, &ParallelDsMachines, out.as_deref()).await?;
-                    }
-                    BroadcastKind::Wxsd => {
-                        let machines = ParallelWxsdMachines {
-                            wxsd: WxsdConfig::default(),
-                        };
-                        local(&spec, &machines, out.as_deref()).await?;
-                    }
-                },
-                Protocol::Ic => {
-                    let config = ic_config(Params::new(n, t)?, view_spacing, None);
-                    match broadcast {
-                        BroadcastKind::DolevStrong => {
-                            local(&spec, &IcMachines { config }, out.as_deref()).await?;
-                        }
-                        BroadcastKind::Wxsd => {
-                            let machines = IcWxsdMachines {
-                                config,
-                                wxsd: WxsdConfig::default(),
-                            };
-                            local(&spec, &machines, out.as_deref()).await?;
-                        }
-                    }
-                }
-            }
+            let config = ic_config(Params::new(n, t)?, view_spacing, None);
+            with_machines!(protocol, broadcast, config, input_bytes, |m| {
+                local(&spec, &m, out.as_deref()).await?;
+            });
         }
     }
     Ok(())
