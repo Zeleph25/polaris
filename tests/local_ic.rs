@@ -22,6 +22,7 @@ async fn ic_cluster_matches_the_simulator() {
     };
     let machines = IcMachines {
         config: CompilerConfig::for_params(params),
+        input_bytes: 0,
     };
     let result = run_local(&spec, &machines).await.unwrap();
 
@@ -34,7 +35,7 @@ async fn ic_cluster_matches_the_simulator() {
         assert_eq!(o.metrics.total().late_msgs, 0, "node {}", o.me);
     }
     for j in 0..n as NodeId {
-        assert_eq!(first.values[usize::from(j)], Some(ic_input(j)));
+        assert_eq!(first.values[usize::from(j)], Some(ic_input(j, 0)));
     }
     let mismatches = compare_with_simulator(&result, &machines, spec.max_rounds).unwrap();
     assert!(mismatches.is_empty(), "inboxes differ: {mismatches:?}");
@@ -46,7 +47,7 @@ async fn ic_cluster_matches_the_simulator() {
     let output = std::fs::read_to_string(dir.join("node-3.output.json")).unwrap();
     assert!(output.contains("\"view\": 1"), "{output}");
     assert!(
-        output.contains(&polaris_crypto::hex::encode(&ic_input(5))),
+        output.contains(&polaris_crypto::hex::encode(&ic_input(5, 0))),
         "{output}"
     );
     std::fs::remove_dir_all(&dir).unwrap();
@@ -70,6 +71,7 @@ async fn ic_over_wxsd_cluster_matches_the_simulator() {
     let machines = IcWxsdMachines {
         config: CompilerConfig::for_params(params),
         wxsd: WxsdConfig::default(),
+        input_bytes: 0,
     };
     let result = run_local(&spec, &machines).await.unwrap();
 
@@ -84,7 +86,7 @@ async fn ic_over_wxsd_cluster_matches_the_simulator() {
         assert_eq!(o.metrics.total().late_msgs, 0, "node {}", o.me);
     }
     for j in 0..n as NodeId {
-        assert_eq!(first.values[usize::from(j)], Some(ic_input(j)));
+        assert_eq!(first.values[usize::from(j)], Some(ic_input(j, 0)));
     }
     let mismatches = compare_with_simulator(&result, &machines, spec.max_rounds).unwrap();
     assert!(mismatches.is_empty(), "inboxes differ: {mismatches:?}");

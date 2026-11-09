@@ -63,8 +63,24 @@ pub fn echo_value(id: NodeId) -> Vec<u8> {
     format!("value-of-{id}").into_bytes()
 }
 
-pub fn ic_input(id: NodeId) -> Vec<u8> {
-    format!("input-of-{id}").into_bytes()
+/// Node `id`'s input: `input-of-<id>` when `bytes` is 0, otherwise exactly
+/// `bytes` bytes starting with that label and padded with a deterministic
+/// pseudo-random filler that depends on the id.
+pub fn ic_input(id: NodeId, bytes: usize) -> Vec<u8> {
+    let mut v = format!("input-of-{id}:").into_bytes();
+    if bytes == 0 {
+        v.pop();
+        return v;
+    }
+    v.truncate(bytes);
+    let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ u64::from(id).wrapping_mul(0x2545_f491_4f6c_dd1d);
+    while v.len() < bytes {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        v.push((x >> 56) as u8);
+    }
+    v
 }
 
 /// The signed echo, the drivers' validation protocol.
@@ -81,9 +97,10 @@ impl Machines for EchoMachines {
     }
 }
 
-/// The IC compiler over Dolev-Strong, every node's input `ic_input(id)`.
+/// The IC compiler over Dolev-Strong, every node's input `ic_input(id, input_bytes)`.
 pub struct IcMachines {
     pub config: CompilerConfig,
+    pub input_bytes: usize,
 }
 
 impl Machines for IcMachines {
@@ -93,7 +110,7 @@ impl Machines for IcMachines {
             keyring.clone(),
             Arc::new(keys.clone()),
             self.config,
-            ic_input(keys.id),
+            ic_input(keys.id, self.input_bytes),
         )
     }
     fn ds_adversary(
@@ -118,6 +135,7 @@ impl Machines for IcMachines {
 pub struct IcWxsdMachines {
     pub config: CompilerConfig,
     pub wxsd: WxsdConfig,
+    pub input_bytes: usize,
 }
 
 impl Machines for IcWxsdMachines {
@@ -128,17 +146,23 @@ impl Machines for IcWxsdMachines {
             Arc::new(keys.clone()),
             self.config,
             self.wxsd,
-            ic_input(keys.id),
+            ic_input(keys.id, self.input_bytes),
         )
     }
 }
 
-pub struct ParallelDsMachines;
+pub struct ParallelDsMachines {
+    pub input_bytes: usize,
+}
 
 impl Machines for ParallelDsMachines {
     type M = Parallel<DolevStrong>;
     fn make(&self, keyring: &Arc<Keyring>, keys: &NodeKeys) -> Self::M {
-        Parallel::with_dolev_strong(keyring.clone(), Arc::new(keys.clone()), ic_input(keys.id))
+        Parallel::with_dolev_strong(
+            keyring.clone(),
+            Arc::new(keys.clone()),
+            ic_input(keys.id, self.input_bytes),
+        )
     }
     fn ds_adversary(
         &self,
@@ -160,6 +184,7 @@ impl Machines for ParallelDsMachines {
 
 pub struct ParallelWxsdMachines {
     pub wxsd: WxsdConfig,
+    pub input_bytes: usize,
 }
 
 impl Machines for ParallelWxsdMachines {
@@ -169,7 +194,7 @@ impl Machines for ParallelWxsdMachines {
             keyring.clone(),
             Arc::new(keys.clone()),
             self.wxsd,
-            ic_input(keys.id),
+            ic_input(keys.id, self.input_bytes),
         )
     }
 }

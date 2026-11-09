@@ -58,6 +58,9 @@ pub struct NodeConfig {
     /// The broadcast of each view for `ic`, or of each instance for `parallel`.
     #[serde(default)]
     pub broadcast: BroadcastKind,
+    /// Input size in bytes for `ic` and `parallel`; 0 means the short label.
+    #[serde(default)]
+    pub input_bytes: usize,
     /// Rounds between view starts for `ic`; the default is R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_spacing: Option<u32>,
