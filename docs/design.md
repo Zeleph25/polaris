@@ -201,7 +201,12 @@ that record it.
    and nothing is re-forwarded.
 6. **Views are spaced `c = R` rounds apart by default**, so that at most one
    LearnOrExpose instance is running at a time; `CompilerConfig` makes `c`
-   a parameter so that denser pipelining can be measured.
+   a parameter so that denser pipelining can be measured, and `c = 0` makes
+   the views sequential: the next starts only once the previous broadcast
+   has delivered without a decision. Pipelining is the paper's design and
+   buys a view of latency per Byzantine leader; the measured price is every
+   view started in vain, about 2.5 times the bytes at 10 KB inputs when the
+   first leader is honest (see the README).
 7. **Every view's LearnOrExpose starts from all the disclosures the node
    holds**, including those learned in earlier views, rather than from the
    round 0 candidates only. The input vector stays `VerifyVec_in`-valid, so
@@ -277,10 +282,12 @@ that record it.
   leader.
 - The compiler (`crates/polaris-proto/tests/compiler.rs`): all honest
   decide in view 1 at the expected round and halt at once; silent Byzantine
-  leaders are skipped and exposed; a Byzantine leader submitting a vector
+  leaders are skipped and exposed, with sequential views one full view
+  later each; a Byzantine leader submitting a vector
   that drops an honest entry, or two valid vectors to two halves, is
   skipped; the view budget stops the run; and random Byzantine sets that are
-  silent or deliver to random subsets, with `c = R` and `c = R / 2`, over
+  silent or deliver to random subsets, with `c = R`, `c = R / 2` and
+  sequential views, over
   `(n, t)` up to `(10, 8)`: agreement, every honest input kept, a decision
   no later than the first view with an honest leader, and simultaneous
   termination. The same over WXSD, with decision rounds one apart at most.

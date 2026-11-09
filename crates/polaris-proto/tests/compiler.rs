@@ -284,7 +284,8 @@ fn random_omission_adversaries() {
             }
             let byzantine: Vec<NodeId> = ids[..t].to_vec();
             let r = kr.params.loe_rounds();
-            let c = if seed % 2 == 0 { r } else { (r / 2).max(1) };
+            // Pipelined every R rounds, denser, or sequential.
+            let c = [r, (r / 2).max(1), 0][(seed % 3) as usize];
             let config = CompilerConfig::for_params(kr.params).with_view_spacing(c);
             let nodes = keys
                 .iter()
@@ -322,6 +323,54 @@ fn random_omission_adversaries() {
             );
         }
     }
+}
+
+#[test]
+fn sequential_views_start_after_a_failed_broadcast() {
+    // Two silent Byzantine leaders in a row: with sequential views the
+    // decision comes in the third view, started only after each previous
+    // broadcast delivered bottom, so later than with pipelining.
+    let (n, t) = (6, 2);
+    let (kr, keys) = (1..)
+        .map(|seed| setup(n, t, seed))
+        .find(|(kr, _)| {
+            leader(kr, 1) != leader(kr, 2)
+                && leader(kr, 3) != leader(kr, 1)
+                && leader(kr, 3) != leader(kr, 2)
+        })
+        .unwrap();
+    let byzantine = vec![leader(&kr, 1), leader(&kr, 2)];
+    let run = |config: CompilerConfig| {
+        let nodes = keys
+            .iter()
+            .map(|k| {
+                if byzantine.contains(&k.id) {
+                    Node::Byzantine(Box::new(Silent))
+                } else {
+                    Node::Honest(ic(&kr, k, config))
+                }
+            })
+            .collect();
+        let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+        sim.run_until_decided(500).unwrap();
+        let out = check(&sim, &byzantine, n);
+        assert_eq!(out.view, 3);
+        let honest = (0..n as NodeId).find(|i| !byzantine.contains(i)).unwrap();
+        (
+            sim.metrics(honest).decision_round().unwrap(),
+            sim.honest(honest).unwrap().stats().views_started,
+        )
+    };
+    let (pipelined, started_pipelined) = run(CompilerConfig::for_params(kr.params));
+    let (sequential, started_sequential) = run(CompilerConfig::for_params(kr.params).sequential());
+    let view_len = kr.params.loe_rounds() + t as Round + 1;
+    assert_eq!(sequential, 3 * view_len, "three full views back to back");
+    assert!(
+        sequential > pipelined,
+        "sequential {sequential} vs pipelined {pipelined}"
+    );
+    assert_eq!(started_sequential, 3, "no view started in vain");
+    assert!(started_pipelined >= 3);
 }
 
 #[test]
