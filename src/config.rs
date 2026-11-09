@@ -37,8 +37,12 @@ pub struct NodeConfig {
     pub keyring: PathBuf,
     /// This node's secret file.
     pub secret: PathBuf,
-    /// `peers[j]` is node j's listen address; ours is `peers[id]`.
+    /// `peers[j]` is the address the others reach node j at.
     pub peers: Vec<String>,
+    /// The address this node binds; `peers[id]` when absent. On a cluster
+    /// of several hosts this is `0.0.0.0:<port>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<String>,
     pub round_ms: u64,
     /// Unix time in ms at which round 0 starts, shared by every node of the
     /// run; 0 means two seconds after this node connected to everyone.
@@ -101,6 +105,12 @@ impl NodeConfig {
             cfg.peers.len()
         );
         Ok(cfg)
+    }
+
+    pub fn listen(&self) -> &str {
+        self.listen
+            .as_deref()
+            .unwrap_or(&self.peers[usize::from(self.id)])
     }
 
     pub fn round(&self) -> Duration {

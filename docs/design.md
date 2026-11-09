@@ -298,7 +298,8 @@ that record it.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 - The evaluation harness (`eval/`): the experiment matrix run with one
-  process per node for the honest runs and in the simulator with Byzantine
+  process per node, on this host or spread over ssh hosts, for the honest
+  runs and in the simulator with Byzantine
   nodes for the runs under attack (generic silent and selective nodes, and
   the Dolev-Strong adversary of `src/adversaries.rs`, which bounds itself
   to one reaction per instance and round), aggregated into tables and
@@ -308,7 +309,7 @@ that record it.
 
 ## Next
 
-Experiments on more than one host, a WXSD-specific adversary in the
-harness (Dolev-Strong has one), the honest-majority reference
-implementations from the project brief, and the improvements: accusations shared across views and with the
+Experiments on real hosts (the launcher is in place), a WXSD-specific
+adversary in the harness (Dolev-Strong has one), the honest-majority
+reference implementations from the project brief, and the improvements: accusations shared across views and with the
 WXSD trust graph, and aggregated trust-graph evidence.
