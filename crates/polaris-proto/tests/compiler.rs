@@ -523,53 +523,77 @@ mod over_wxsd {
         }
     }
 
+    /// One run under the omission adversary; checks agreement, validity, the
+    /// view bound and the skew, and returns the earliest honest decision round.
+    fn omission_run(n: usize, t: usize, seed: u64, config: CompilerConfig) -> Round {
+        let (kr, keys) = setup(n, t, seed);
+        let mut rng = ChaCha12Rng::seed_from_u64(seed * 104729 + n as u64);
+        let mut ids: Vec<NodeId> = (0..n as NodeId).collect();
+        for i in (1..ids.len()).rev() {
+            ids.swap(i, rng.random_range(0..=i));
+        }
+        let byzantine: Vec<NodeId> = ids[..t].to_vec();
+        let nodes = keys
+            .iter()
+            .map(|k| {
+                if !byzantine.contains(&k.id) {
+                    Node::Honest(ic(&kr, k, config))
+                } else if rng.random_bool(0.3) {
+                    Node::Byzantine(Box::new(Silent))
+                } else {
+                    let subset =
+                        NodeSet::from_iter(n, (0..n as NodeId).filter(|_| rng.random_bool(0.5)));
+                    Node::Byzantine(Box::new(Selective::new(ic(&kr, k, config), subset)))
+                }
+            })
+            .collect();
+        let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+        let ctx = format!("n={n} t={t} seed={seed} {config:?}");
+        sim.run_until_decided(20_000)
+            .unwrap_or_else(|e| panic!("{ctx}: {e}"));
+        while (0..n as NodeId)
+            .filter(|i| !byzantine.contains(i))
+            .any(|i| !sim.honest(i).unwrap().is_halted())
+        {
+            sim.step();
+        }
+        let out = check(&sim, &byzantine, n);
+        let bound = first_honest_leader(&kr, &byzantine);
+        assert!(out.view <= bound, "{ctx}: view {} after {bound}", out.view);
+        let rounds: Vec<_> = (0..n as NodeId)
+            .filter(|i| !byzantine.contains(i))
+            .map(|i| sim.metrics(i).decision_round().unwrap())
+            .collect();
+        let (lo, hi) = (*rounds.iter().min().unwrap(), *rounds.iter().max().unwrap());
+        assert!(hi - lo <= 1, "{ctx}: skew {rounds:?}");
+        lo
+    }
+
     #[test]
     fn random_omission_adversaries() {
         for &(n, t) in &[(4, 1), (6, 2), (8, 4), (8, 6)] {
-            for seed in 0..12u64 {
-                let (kr, keys) = setup(n, t, seed);
-                let mut rng = ChaCha12Rng::seed_from_u64(seed * 104729 + n as u64);
-                let mut ids: Vec<NodeId> = (0..n as NodeId).collect();
-                for i in (1..ids.len()).rev() {
-                    ids.swap(i, rng.random_range(0..=i));
-                }
-                let byzantine: Vec<NodeId> = ids[..t].to_vec();
-                let mut config = CompilerConfig::for_params(kr.params);
+            for seed in 0..16u64 {
+                let mut config = CompilerConfig::for_params(Params::new(n, t).unwrap());
                 if seed % 2 == 1 {
                     config = config.sharing_accusations();
                 }
-                let nodes = keys
-                    .iter()
-                    .map(|k| {
-                        if !byzantine.contains(&k.id) {
-                            Node::Honest(ic(&kr, k, config))
-                        } else if rng.random_bool(0.3) {
-                            Node::Byzantine(Box::new(Silent))
-                        } else {
-                            let subset = NodeSet::from_iter(
-                                n,
-                                (0..n as NodeId).filter(|_| rng.random_bool(0.5)),
-                            );
-                            Node::Byzantine(Box::new(Selective::new(ic(&kr, k, config), subset)))
-                        }
-                    })
-                    .collect();
-                let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
-                sim.run_until_decided(20_000)
-                    .unwrap_or_else(|e| panic!("n={n} t={t} seed={seed}: {e}"));
-                let out = check(&sim, &byzantine, n);
-                let bound = first_honest_leader(&kr, &byzantine);
-                assert!(
-                    out.view <= bound,
-                    "n={n} t={t} seed={seed}: view {} after {bound}",
-                    out.view
-                );
-                let rounds: Vec<_> = (0..n as NodeId)
-                    .filter(|i| !byzantine.contains(i))
-                    .map(|i| sim.metrics(i).decision_round().unwrap())
-                    .collect();
-                let (lo, hi) = (rounds.iter().min().unwrap(), rounds.iter().max().unwrap());
-                assert!(hi - lo <= 1, "n={n} t={t} seed={seed}: skew {rounds:?}");
+                omission_run(n, t, seed, config);
+            }
+        }
+    }
+
+    #[test]
+    fn sequential_views_keep_agreement() {
+        // WXSD's honest nodes may end a round apart; the next view must
+        // still start in the same round everywhere.
+        for &(n, t) in &[(6, 2), (8, 4), (8, 6)] {
+            for seed in 0..24u64 {
+                let mut config =
+                    CompilerConfig::for_params(Params::new(n, t).unwrap()).sequential();
+                if seed % 2 == 1 {
+                    config = config.sharing_accusations();
+                }
+                omission_run(n, t, seed, config);
             }
         }
     }

@@ -310,6 +310,8 @@ pub struct Wxsd {
 
     committed: Option<Digest>,
     output: Option<Value>,
+    /// The epoch whose commits this node terminated on.
+    output_epoch: Option<Epoch>,
     halted: bool,
     stats: WxsdStats,
 }
@@ -340,6 +342,7 @@ impl Wxsd {
             floor: 0,
             committed: None,
             output: None,
+            output_epoch: None,
             halted: false,
             stats: WxsdStats::default(),
             first_round: None,
@@ -1067,6 +1070,7 @@ impl RoundMachine for Wxsd {
                     None
                 });
                 self.output = Some(value);
+                self.output_epoch = Some(epoch);
                 ctx.metrics.decided(round);
                 return out;
             }
@@ -1094,6 +1098,7 @@ impl RoundMachine for Wxsd {
                             "no termination within the epoch budget; deciding bottom"
                         );
                         self.output = Some(None);
+                        self.output_epoch = Some(clock.epoch);
                         ctx.metrics.decided(round);
                         return out;
                     }
@@ -1131,8 +1136,24 @@ impl Broadcast for Wxsd {
         1
     }
 
+    /// Every honest node terminates on the commits of the same epoch `e`,
+    /// in epoch `e` or, from late commits, in epoch `e + 1`: the last round
+    /// of epoch `e + 1` is past every honest termination.
+    fn settled_round(&self, delivered: Round) -> Round {
+        match (self.first_round, self.output_epoch) {
+            (Some(first), Some(e)) => first + (e + 1) * self.epoch_len() - 1,
+            _ => delivered,
+        }
+    }
+
     fn accusations(&self) -> Option<&AccusationSet> {
         Some(&self.acc)
+    }
+
+    fn absorb_accusations(&mut self, accs: &[Accusation]) {
+        for a in accs {
+            self.acc.insert(a);
+        }
     }
 }
 

@@ -7,9 +7,9 @@
 //! thing (agreement), and if the sender is honest they decide its input
 //! (validity).
 
-use polaris_core::{NodeId, RoundMachine};
+use polaris_core::{NodeId, Round, RoundMachine};
 
-use crate::accusations::AccusationSet;
+use crate::accusations::{Accusation, AccusationSet};
 
 pub mod dolev_strong;
 pub mod naive;
@@ -22,9 +22,26 @@ pub trait Broadcast: RoundMachine<Output = Option<Vec<u8>>> {
     /// other. The compiler waits that long after deciding before it halts.
     fn termination_skew(&self) -> u32;
 
+    /// A round by which every honest node has delivered, computed the same
+    /// way at every honest node from this node's delivery in `delivered`.
+    /// A broadcast whose honest nodes terminate together returns
+    /// `delivered`; one with a skew must say where its terminations end.
+    fn settled_round(&self, delivered: Round) -> Round {
+        assert_eq!(
+            self.termination_skew(),
+            0,
+            "a broadcast with a skew must override this"
+        );
+        delivered
+    }
+
     /// The accusations this instance holds, for a broadcast built on a
     /// trust graph; the compiler carries them into later views.
     fn accusations(&self) -> Option<&AccusationSet> {
         None
     }
+
+    /// Adds accusations learned outside this instance after it started; a
+    /// broadcast without a trust graph ignores them.
+    fn absorb_accusations(&mut self, _accs: &[Accusation]) {}
 }

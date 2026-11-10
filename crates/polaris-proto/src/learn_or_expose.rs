@@ -142,6 +142,15 @@ impl LearnOrExpose {
         &self.acc
     }
 
+    /// Adds accusations learned outside this instance after it started. The
+    /// compiler gossips each one when it absorbs it, so every honest node
+    /// absorbs it within one round.
+    pub fn absorb_accusations(&mut self, accs: &[Accusation]) {
+        for a in accs {
+            self.acc.insert(a);
+        }
+    }
+
     pub fn entries(&self) -> &Entries {
         &self.entries
     }
