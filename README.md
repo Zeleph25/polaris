@@ -116,9 +116,10 @@ cargo run --release -- keygen --n 8 --t 4 --out keys
 `--view-spacing` sets `c` for `ic` (default R; `0` makes the views
 sequential, the next starting only when the previous broadcast delivered
 without a decision), `--input-bytes` the size of every node's input
-(default: the short label `input-of-<i>`), and `--aggregate-votes` makes
+(default: the short label `input-of-<i>`), `--aggregate-votes` makes
 WXSD send commit evidence as one BLS multi-signature instead of the signed
-votes. `genconfig` writes
+votes, and `--share-accusations` carries the accusations of finished
+instances into the next ones. `genconfig` writes
 `keyring.toml` (every node's public keys and proofs of possession),
 `node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
 addresses, the round length, the shared wall-clock start of round 0, the
@@ -191,6 +192,41 @@ twice what n parallel Dolev-Strong sends when nobody attacks. Under the
 Dolev-Strong attack at n = 32, sequential views decide in 29 +- 13 rounds
 against 24 +- 3 pipelined: a whole view of latency per Byzantine leader,
 for a third of the bytes.
+
+Aggregated vote evidence (`--aggregate-votes`: one BLS multi-signature per
+commit instead of the signed votes) takes WXSD's Commit phase, the heaviest
+round of the system, down by a factor of four to six, bytes sent per node
+with every node honest:
+
+| | paper's evidence | aggregated |
+| --- | --- | --- |
+| polaris over WXSD, n = 16 | 677 KB | 279 KB |
+| polaris over WXSD, n = 32 | 4.3 MB | 1.1 MB |
+| n parallel WXSD, n = 16 | 8.0 MB | 1.4 MB |
+| n parallel WXSD, n = 32 | 115 MB | 13.6 MB |
+
+Signature work moves the other way at small n (a pairing costs twenty
+Ed25519 checks, and every vote now gets one per distinct body per round),
+and comes out ahead from n = 32 on.
+
+Shared accusations (`--share-accusations`: every instance starts from the
+accusations of the finished ones, gossiped once at the run level) pay off
+under attack, bytes per honest node with t Byzantine nodes, silent or
+selective:
+
+| | paper (fresh graph per instance) | shared |
+| --- | --- | --- |
+| over Dolev-Strong, n = 32 | 1.52 MB, 21k messages | 1.06 MB, 13k messages |
+| over WXSD, n = 16 | 266 KB | 225 KB |
+| over WXSD, n = 32 | 1.74 MB, view 1 | 2.2 MB +- 1.7 MB, views 1 to 2 |
+
+The WXSD row at n = 32 is three seeds where in one a Byzantine view-1
+leader delivering selectively gets its vector through on a fresh graph
+and is cut off on a seeded one, which costs a view; more seeds would
+settle the average, the mechanism is not in doubt. The n parallel WXSD run at n = 32 only
+completes with aggregation; with 32 processes on two cores at 500 ms
+rounds it still reports late messages, so its numbers are a load artifact
+and belong on more hosts.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 

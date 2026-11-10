@@ -51,6 +51,8 @@ def run_sim(binary, exp, n, t, rep, d, defaults):
         cmd += ["--view-spacing", str(exp["view_spacing"])]
     if exp.get("aggregate_votes"):
         cmd += ["--aggregate-votes"]
+    if exp.get("share_accusations"):
+        cmd += ["--share-accusations"]
     started = time.time()
     with open(d / "sim.log", "w") as log:
         code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
@@ -81,6 +83,8 @@ def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools):
         gen += ["--view-spacing", str(exp["view_spacing"])]
     if exp.get("aggregate_votes"):
         gen += ["--aggregate-votes"]
+    if exp.get("share_accusations"):
+        gen += ["--share-accusations"]
     if hosts:
         gen += ["--hosts", ",".join(host_name(h) for h in hosts["list"])]
     subprocess.run(gen, check=True, capture_output=True)

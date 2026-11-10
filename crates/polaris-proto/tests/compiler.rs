@@ -284,9 +284,13 @@ fn random_omission_adversaries() {
             }
             let byzantine: Vec<NodeId> = ids[..t].to_vec();
             let r = kr.params.loe_rounds();
-            // Pipelined every R rounds, denser, or sequential.
+            // Pipelined every R rounds, denser, or sequential; accusations
+            // shared on every other seed.
             let c = [r, (r / 2).max(1), 0][(seed % 3) as usize];
-            let config = CompilerConfig::for_params(kr.params).with_view_spacing(c);
+            let mut config = CompilerConfig::for_params(kr.params).with_view_spacing(c);
+            if seed % 2 == 1 {
+                config = config.sharing_accusations();
+            }
             let nodes = keys
                 .iter()
                 .map(|k| {
@@ -371,6 +375,49 @@ fn sequential_views_start_after_a_failed_broadcast() {
     );
     assert_eq!(started_sequential, 3, "no view started in vain");
     assert!(started_pipelined >= 3);
+}
+
+#[test]
+fn shared_accusations_spare_later_views() {
+    // Two silent Byzantine leaders in a row. Without sharing, every view's
+    // LearnOrExpose accuses the silent nodes again; with sharing, the second
+    // and third views start with them already cut off and accuse nobody.
+    let (n, t) = (6, 2);
+    let (kr, keys) = (1..)
+        .map(|seed| setup(n, t, seed))
+        .find(|(kr, _)| {
+            leader(kr, 1) != leader(kr, 2)
+                && leader(kr, 3) != leader(kr, 1)
+                && leader(kr, 3) != leader(kr, 2)
+        })
+        .unwrap();
+    let byzantine = vec![leader(&kr, 1), leader(&kr, 2)];
+    let run = |config: CompilerConfig| {
+        let nodes = keys
+            .iter()
+            .map(|k| {
+                if byzantine.contains(&k.id) {
+                    Node::Byzantine(Box::new(Silent))
+                } else {
+                    Node::Honest(ic(&kr, k, config))
+                }
+            })
+            .collect();
+        let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+        sim.run_until_decided(500).unwrap();
+        let out = check(&sim, &byzantine, n);
+        assert_eq!(out.view, 3);
+        let honest = (0..n as NodeId).find(|i| !byzantine.contains(i)).unwrap();
+        let s = sim.honest(honest).unwrap().stats();
+        (s.accusations_sent, s.views_started)
+    };
+    let base = CompilerConfig::for_params(kr.params).sequential();
+    let (plain, views) = run(base);
+    let (shared, views_shared) = run(base.sharing_accusations());
+    assert_eq!(views, 3);
+    assert_eq!(views_shared, 3);
+    assert_eq!(plain, 3 * 2, "two silent nodes accused once per view");
+    assert_eq!(shared, 2, "accused in the first view only");
 }
 
 #[test]
@@ -487,7 +534,10 @@ mod over_wxsd {
                     ids.swap(i, rng.random_range(0..=i));
                 }
                 let byzantine: Vec<NodeId> = ids[..t].to_vec();
-                let config = CompilerConfig::for_params(kr.params);
+                let mut config = CompilerConfig::for_params(kr.params);
+                if seed % 2 == 1 {
+                    config = config.sharing_accusations();
+                }
                 let nodes = keys
                     .iter()
                     .map(|k| {

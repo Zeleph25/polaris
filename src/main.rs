@@ -92,6 +92,9 @@ enum Cmd {
         /// WXSD: aggregated vote evidence (BLS multi-signatures).
         #[arg(long)]
         aggregate_votes: bool,
+        /// `ic`: carry accusations from finished instances into the next ones.
+        #[arg(long)]
+        share_accusations: bool,
     },
     /// Run one node from a config file.
     Node {
@@ -125,6 +128,8 @@ enum Cmd {
         #[arg(long)]
         aggregate_votes: bool,
         #[arg(long)]
+        share_accusations: bool,
+        #[arg(long)]
         out: PathBuf,
     },
     /// Run an n-node cluster in this process over TCP and check its
@@ -150,6 +155,8 @@ enum Cmd {
         input_bytes: usize,
         #[arg(long)]
         aggregate_votes: bool,
+        #[arg(long)]
+        share_accusations: bool,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -248,6 +255,7 @@ async fn main() -> anyhow::Result<()> {
             view_spacing,
             input_bytes,
             aggregate_votes,
+            share_accusations,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -278,6 +286,7 @@ async fn main() -> anyhow::Result<()> {
                     protocol,
                     broadcast,
                     aggregate_votes,
+                    share_accusations,
                     input_bytes,
                     view_spacing,
                     max_views: None,
@@ -327,7 +336,12 @@ async fn main() -> anyhow::Result<()> {
                 linger_rounds: cfg.linger_rounds,
             };
             tracing::info!(node = cfg.id, "connected; waiting for round 0");
-            let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
+            let config = ic_config(
+                kr.params,
+                cfg.view_spacing,
+                cfg.max_views,
+                cfg.share_accusations,
+            );
             let wxsd = wxsd_config(cfg.aggregate_votes);
             with_machines!(
                 cfg.protocol,
@@ -354,6 +368,7 @@ async fn main() -> anyhow::Result<()> {
             max_rounds,
             input_bytes,
             aggregate_votes,
+            share_accusations,
             out,
         } => {
             let spec = SimSpec {
@@ -365,7 +380,7 @@ async fn main() -> anyhow::Result<()> {
                 seed,
                 run_id: 1,
             };
-            let config = ic_config(Params::new(n, t)?, view_spacing, None);
+            let config = ic_config(Params::new(n, t)?, view_spacing, None, share_accusations);
             let wxsd = wxsd_config(aggregate_votes);
             with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 sim(&spec, &m, &out)?;
@@ -382,6 +397,7 @@ async fn main() -> anyhow::Result<()> {
             max_rounds,
             input_bytes,
             aggregate_votes,
+            share_accusations,
             out,
         } => {
             let spec = LocalSpec {
@@ -392,7 +408,7 @@ async fn main() -> anyhow::Result<()> {
                 seed,
                 run_id: 1,
             };
-            let config = ic_config(Params::new(n, t)?, view_spacing, None);
+            let config = ic_config(Params::new(n, t)?, view_spacing, None, share_accusations);
             let wxsd = wxsd_config(aggregate_votes);
             with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 local(&spec, &m, out.as_deref()).await?;
@@ -423,8 +439,16 @@ fn wxsd_config(aggregate_votes: bool) -> WxsdConfig {
     }
 }
 
-fn ic_config(params: Params, view_spacing: Option<u32>, max_views: Option<u32>) -> CompilerConfig {
+fn ic_config(
+    params: Params,
+    view_spacing: Option<u32>,
+    max_views: Option<u32>,
+    share_accusations: bool,
+) -> CompilerConfig {
     let mut config = CompilerConfig::for_params(params);
+    if share_accusations {
+        config = config.sharing_accusations();
+    }
     if let Some(c) = view_spacing {
         config = config.with_view_spacing(c);
     }

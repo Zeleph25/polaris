@@ -169,6 +169,22 @@ bottom for the exposed parties. After deciding, the node keeps running the
 views in progress for the broadcast's termination skew (`Delta_sim`, zero
 for Dolev-Strong) and then halts.
 
+With `share_accusations`, the compiler keeps the accusations of every
+finished LearnOrExpose and WXSD instance and seeds the next instances with
+them: a Byzantine node cut off once stays cut off, and a view's WXSD starts
+from the graph its LearnOrExpose ended with instead of the complete graph.
+Accusations are scoped to the run, so they stay valid. The proofs of both
+protocols rest on every honest node's accusation set covering every
+other's of one round earlier; an instance's own forwarding keeps that
+within the instance, but an instance's last round forwards nothing, so the
+compiler gossips each accusation once at the run level when it learns it
+from a finished instance (`IcMsg::Accuse`, verified and forwarded once by
+every node), which keeps the shared sets within one round of each other
+across instance boundaries. A first version re-sent the whole set at every
+instance start instead, which cost about `n^2` times the set per view and
+was measured before being replaced. The paper starts every instance from
+the complete graph; both modes are kept so that the gain is measured.
+
 Sub-machines get their own context: they record signature work into it and
 also call `decided`, which must not count as the compiler's decision, so
 the compiler absorbs their counters into its own metrics every round.
@@ -208,10 +224,9 @@ that record it.
    leader, so that transferability can be tested (any honest node's proof
    verifies at any other). The compiler will submit only the leader's.
 4. **Accusations are scoped to the run, not to the view.** Under static
-   corruption an honest accusation stays valid for the whole run. Reusing
-   accusations across views, and sharing them with the WXSD trust graph, is
-   a planned improvement to be measured separately; the format already
-   allows it.
+   corruption an honest accusation stays valid for the whole run, which is
+   what lets `share_accusations` carry them across views and into the WXSD
+   trust graph.
 5. **A node's own accusations enter its accusation set when it signs them,**
    not a round later when they echo back. Same graph, one round earlier,
    and nothing is re-forwarded.
@@ -304,7 +319,7 @@ that record it.
   that drops an honest entry, or two valid vectors to two halves, is
   skipped; the view budget stops the run; and random Byzantine sets that are
   silent or deliver to random subsets, with `c = R`, `c = R / 2` and
-  sequential views, over
+  sequential views, with and without shared accusations, over
   `(n, t)` up to `(10, 8)`: agreement, every honest input kept, a decision
   no later than the first view with an honest leader, and simultaneous
   termination. The same over WXSD, with decision rounds one apart at most.
@@ -328,5 +343,7 @@ that record it.
 
 Experiments on real hosts (the launcher is in place), a WXSD-specific
 adversary in the harness (Dolev-Strong has one), the honest-majority
-reference implementations from the project brief, and the improvements: accusations shared across views and with the
-WXSD trust graph (aggregated vote evidence is done).
+reference implementations from the project brief, the Monte Carlo
+baseline, a long soak of the complete system, and the report. The three
+improvements of the plan (accusations shared across views and with the
+WXSD trust graph, aggregated vote evidence) are in and measured.

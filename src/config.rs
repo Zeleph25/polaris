@@ -69,6 +69,9 @@ pub struct NodeConfig {
     /// Input size in bytes for `ic` and `parallel`; 0 means the short label.
     #[serde(default)]
     pub input_bytes: usize,
+    /// `ic`: carry accusations from finished instances into the next ones.
+    #[serde(default)]
+    pub share_accusations: bool,
     /// Rounds between view starts for `ic`; the default is R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_spacing: Option<u32>,
