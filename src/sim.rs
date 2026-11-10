@@ -140,9 +140,27 @@ where
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut sim = Simulator::new(params, spec.run_id, nodes)?.with_transcript(false);
-    let last_round = sim
-        .run_until_decided(spec.max_rounds)
+    sim.run_until_decided(spec.max_rounds)
         .context("the simulator stalled")?;
+    // Keep going until every honest node has halted, as the network runner
+    // does: a protocol with a termination skew keeps sending after its
+    // decision (the compiler runs its views in progress for Delta_sim more
+    // rounds), and those messages are part of its cost.
+    let honest: Vec<NodeId> = (0..spec.n as NodeId)
+        .filter(|i| !byzantine.contains(i))
+        .collect();
+    while honest
+        .iter()
+        .any(|&i| sim.honest(i).is_some_and(|m| !m.is_halted()))
+    {
+        anyhow::ensure!(
+            sim.round() < spec.max_rounds,
+            "honest nodes still running after {} rounds",
+            spec.max_rounds
+        );
+        sim.step();
+    }
+    let last_round = sim.round();
     let outputs = sim.outputs();
     let outcomes = (0..spec.n as NodeId)
         .filter(|i| !byzantine.contains(i))

@@ -103,14 +103,21 @@ impl Metrics {
     }
 
     /// Totals of the closed rounds.
+    /// Everything recorded so far, the open round included: the messages a
+    /// node hands to the network in the last round it runs are sent even
+    /// if no driver closes that round afterwards.
     pub fn total(&self) -> Counters {
-        self.total
+        let mut total = self.total;
+        total.add(&self.current);
+        total
     }
 
     pub fn rounds(&self) -> &[(Round, Counters)] {
         &self.rounds
     }
 
+    /// One record per closed round, one for the open round if anything was
+    /// recorded in it, and the summary.
     pub fn records(&self, node: NodeId) -> Vec<Record> {
         let mut out: Vec<Record> = self
             .rounds
@@ -121,11 +128,18 @@ impl Metrics {
                 counters: *counters,
             })
             .collect();
+        if self.current != Counters::default() {
+            out.push(Record::Round {
+                node,
+                round: self.rounds.last().map_or(0, |(r, _)| r + 1),
+                counters: self.current,
+            });
+        }
         out.push(Record::Summary {
             node,
             rounds: u32::try_from(self.rounds.len()).unwrap_or(u32::MAX),
             decision_round: self.decision_round,
-            total: self.total,
+            total: self.total(),
         });
         out
     }
@@ -134,6 +148,22 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_open_round_counts() {
+        let mut m = Metrics::default();
+        m.sent(2, 200);
+        m.end_round(0);
+        m.sent(4, 400);
+        assert_eq!(
+            m.total().msgs_sent,
+            6,
+            "sends of an unclosed round are sent"
+        );
+        let records = m.records(7);
+        assert_eq!(records.len(), 3, "round 0, the open round 1, the summary");
+        assert!(matches!(records[1], Record::Round { round: 1, .. }));
+    }
 
     #[test]
     fn rounds_roll_into_totals() {
