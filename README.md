@@ -115,8 +115,10 @@ cargo run --release -- keygen --n 8 --t 4 --out keys
 
 `--view-spacing` sets `c` for `ic` (default R; `0` makes the views
 sequential, the next starting only when the previous broadcast delivered
-without a decision) and `--input-bytes` the size of every node's input
-(default: the short label `input-of-<i>`). `genconfig` writes
+without a decision), `--input-bytes` the size of every node's input
+(default: the short label `input-of-<i>`), and `--aggregate-votes` makes
+WXSD send commit evidence as one BLS multi-signature instead of the signed
+votes. `genconfig` writes
 `keyring.toml` (every node's public keys and proofs of possession),
 `node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
 addresses, the round length, the shared wall-clock start of round 0, the

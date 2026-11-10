@@ -216,3 +216,38 @@ protocol = "ic"
 broadcast = "dolev-strong"
 view_spacing = 0
 sizes = [[8, 2], [16, 4], [32, 16]]
+
+# Aggregated vote evidence in WXSD (aggregate_votes = true): one BLS
+# multi-signature and a signer set per commit instead of n signed votes.
+
+[[experiment]]
+name = "ic-wxsd-agg"
+protocol = "ic"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-wxsd-agg"
+protocol = "parallel"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd-attack-agg"
+mode = "sim"
+adversary = "mixed"
+protocol = "ic"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "parallel-wxsd-attack-agg"
+mode = "sim"
+adversary = "mixed"
+protocol = "parallel"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 2], [16, 4]]

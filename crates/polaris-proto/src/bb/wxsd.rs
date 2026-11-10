@@ -43,6 +43,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use polaris_core::{Ctx, NodeId, NodeSet, Outgoing, Round, RoundMachine, wire};
+use polaris_crypto::bls::{self, MultiSig};
 use polaris_crypto::domain;
 use polaris_crypto::ed25519::{self, Item, Sig};
 use polaris_crypto::hash::{self, Digest};
@@ -64,6 +65,12 @@ pub struct Signed<T> {
     pub from: NodeId,
     pub body: T,
     pub sig: Sig,
+    /// A BLS signature on the same body, carried by votes when evidence is
+    /// aggregated: the Ed25519 one still proves authorship cheaply and
+    /// catches equivocation, this one goes into the multi-signature. Always
+    /// on the wire (one byte when absent): postcard is not self-describing,
+    /// so a skipped field cannot be decoded.
+    pub bls: Option<bls::Sig>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,7 +99,33 @@ pub struct Vote {
 pub struct Evidence {
     pub epoch: Epoch,
     pub digest: Digest,
-    pub votes: Vec<Signed<Vote>>,
+    pub proof: VoteProof,
+}
+
+/// The paper's evidence is the signed votes themselves; aggregated, it is
+/// one BLS multi-signature on the vote body plus the signer set, about a
+/// hundred bytes whatever `n`, verified in one pairing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoteProof {
+    Individual(Vec<Signed<Vote>>),
+    Aggregate(MultiSig),
+}
+
+impl Evidence {
+    pub fn voters(&self, n: usize) -> Option<NodeSet> {
+        match &self.proof {
+            VoteProof::Individual(votes) => {
+                let mut voters = NodeSet::empty(n);
+                for v in votes {
+                    if usize::from(v.from) >= n || !voters.insert(v.from) {
+                        return None;
+                    }
+                }
+                Some(voters)
+            }
+            VoteProof::Aggregate(ms) => (ms.signers.universe() == n).then(|| ms.signers.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,11 +156,24 @@ pub enum WxsdMsg {
 pub struct WxsdConfig {
     /// Epochs run at most; a run that exhausts them decides bottom.
     pub max_epochs: Epoch,
+    /// Sign votes with BLS as well and send commit evidence as one
+    /// multi-signature instead of the votes themselves.
+    pub aggregate_votes: bool,
 }
 
 impl Default for WxsdConfig {
     fn default() -> Self {
-        Self { max_epochs: 64 }
+        Self {
+            max_epochs: 64,
+            aggregate_votes: false,
+        }
+    }
+}
+
+impl WxsdConfig {
+    pub fn aggregated(mut self) -> Self {
+        self.aggregate_votes = true;
+        self
     }
 }
 
@@ -165,7 +211,18 @@ pub fn sign<T: Serialize>(
         from: keys.id,
         body,
         sig,
+        bls: None,
     }
+}
+
+/// A vote with both signatures, for aggregated evidence.
+pub fn sign_vote_bls(keys: &NodeKeys, run_id: u64, instance: u64, body: Vote) -> Signed<Vote> {
+    let mut v = sign(keys, run_id, instance, domain::WXSD_VOTE, body);
+    v.bls = Some(
+        keys.bls
+            .sign(domain::WXSD_VOTE, run_id, &signing_body(instance, &body)),
+    );
+    v
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -408,16 +465,9 @@ impl Wxsd {
     /// node in this node's graph.
     fn evidence_valid(&mut self, ctx: &mut Ctx, e: &Evidence) -> bool {
         let n = self.n();
-        let mut voters = NodeSet::empty(n);
-        for v in &e.votes {
-            if v.body.epoch != e.epoch
-                || v.body.ballot != Ballot::For(e.digest)
-                || usize::from(v.from) >= n
-                || !voters.insert(v.from)
-            {
-                return false;
-            }
-        }
+        let Some(voters) = e.voters(n) else {
+            return false;
+        };
         if !self.trusted.is_subset(&voters) {
             return false;
         }
@@ -425,30 +475,109 @@ impl Wxsd {
         if self.verified.contains(&key) {
             return true;
         }
-        let bodies: Vec<Vec<u8>> = e
-            .votes
-            .iter()
-            .map(|v| signing_body(self.instance, &v.body))
-            .collect();
-        let items: Vec<Item<'_>> = e
-            .votes
-            .iter()
-            .zip(&bodies)
-            .map(|(v, body)| Item {
-                pk: self.keyring.ed25519(v.from),
-                tag: domain::WXSD_VOTE,
-                run_id: self.keyring.run_id,
-                body,
-                sig: &v.sig,
-            })
-            .collect();
+        let expected = Vote {
+            epoch: e.epoch,
+            ballot: Ballot::For(e.digest),
+        };
         let started = Instant::now();
-        let ok = ed25519::verify_batch(&items).is_ok();
-        ctx.metrics.verified(items.len() as u64, started.elapsed());
+        let (ok, count) = match &e.proof {
+            VoteProof::Individual(votes) => {
+                if votes.iter().any(|v| v.body != expected) {
+                    return false;
+                }
+                let bodies: Vec<Vec<u8>> = votes
+                    .iter()
+                    .map(|v| signing_body(self.instance, &v.body))
+                    .collect();
+                let items: Vec<Item<'_>> = votes
+                    .iter()
+                    .zip(&bodies)
+                    .map(|(v, body)| Item {
+                        pk: self.keyring.ed25519(v.from),
+                        tag: domain::WXSD_VOTE,
+                        run_id: self.keyring.run_id,
+                        body,
+                        sig: &v.sig,
+                    })
+                    .collect();
+                (ed25519::verify_batch(&items).is_ok(), items.len())
+            }
+            VoteProof::Aggregate(ms) => (
+                ms.verify(
+                    self.keyring.bls_keys(),
+                    domain::WXSD_VOTE,
+                    self.keyring.run_id,
+                    &signing_body(self.instance, &expected),
+                ),
+                1,
+            ),
+        };
+        ctx.metrics.verified(count as u64, started.elapsed());
         if ok {
             self.verified.insert(key);
         }
         ok
+    }
+
+    /// Checks the BLS parts of this round's votes, one pairing per distinct
+    /// body with a one-by-one fallback, so that a garbage part never
+    /// reaches an aggregate. Returns which votes are usable.
+    fn check_bls_votes(&mut self, ctx: &mut Ctx, votes: &[Signed<Vote>]) -> Vec<bool> {
+        let n = self.n();
+        let mut ok = vec![false; votes.len()];
+        let mut groups: BTreeMap<Vec<u8>, Vec<usize>> = BTreeMap::new();
+        for (i, v) in votes.iter().enumerate() {
+            let key = Self::digest_of(&("bls", v));
+            if self.verified.contains(&key) {
+                ok[i] = true;
+            } else if v.bls.is_some() {
+                groups
+                    .entry(signing_body(self.instance, &v.body))
+                    .or_default()
+                    .push(i);
+            }
+        }
+        let started = Instant::now();
+        let mut count = 0u64;
+        for (body, idxs) in groups {
+            let parts = idxs
+                .iter()
+                .map(|&i| (votes[i].from, votes[i].bls.expect("grouped with a part")));
+            let batch_ok = idxs.len() > 1
+                && MultiSig::aggregate(n, parts).is_ok_and(|ms| {
+                    ms.verify(
+                        self.keyring.bls_keys(),
+                        domain::WXSD_VOTE,
+                        self.keyring.run_id,
+                        &body,
+                    )
+                });
+            count += 1;
+            for i in idxs {
+                let v = &votes[i];
+                let single = || {
+                    self.keyring.bls(v.from).verify(
+                        domain::WXSD_VOTE,
+                        self.keyring.run_id,
+                        &body,
+                        &v.bls.expect("grouped with a part"),
+                    )
+                };
+                if batch_ok || single() {
+                    ok[i] = true;
+                    self.verified.insert(Self::digest_of(&("bls", v)));
+                } else {
+                    count += 1;
+                }
+            }
+        }
+        ctx.metrics.verified(count, started.elapsed());
+        ok
+    }
+
+    /// Whether a vote's BLS part passed this round's batch check.
+    fn bls_ok(&self, v: &Signed<Vote>) -> bool {
+        self.verified.contains(&Self::digest_of(&("bls", v)))
     }
 
     fn note_evidence(&mut self, e: &Evidence) {
@@ -685,13 +814,18 @@ impl Wxsd {
             Some(x) if self.trusted.contains(leader) => Ballot::For(x),
             _ => Ballot::Abstain,
         };
-        WxsdMsg::Vote(sign(
-            &self.keys,
-            self.keyring.run_id,
-            self.instance,
-            domain::WXSD_VOTE,
-            Vote { epoch, ballot },
-        ))
+        let body = Vote { epoch, ballot };
+        WxsdMsg::Vote(if self.config.aggregate_votes {
+            sign_vote_bls(&self.keys, self.keyring.run_id, self.instance, body)
+        } else {
+            sign(
+                &self.keys,
+                self.keyring.run_id,
+                self.instance,
+                domain::WXSD_VOTE,
+                body,
+            )
+        })
     }
 
     fn commit(&mut self, epoch: Epoch) -> WxsdMsg {
@@ -713,12 +847,21 @@ impl Wxsd {
                 _ => unanimous = false,
             }
         }
-        let evidence = match common {
-            Some(digest) if unanimous && self.values.contains_key(&digest) => {
+        let proof = if self.config.aggregate_votes {
+            let n = self.n();
+            MultiSig::aggregate(n, votes.iter().filter_map(|v| v.bls.map(|s| (v.from, s))))
+                .ok()
+                .filter(|ms| ms.signers.count() == votes.len())
+                .map(VoteProof::Aggregate)
+        } else {
+            Some(VoteProof::Individual(votes))
+        };
+        let evidence = match (common, proof) {
+            (Some(digest), Some(proof)) if unanimous && self.values.contains_key(&digest) => {
                 let e = Evidence {
                     epoch,
                     digest,
-                    votes,
+                    proof,
                 };
                 if self.committed.is_none() {
                     self.committed = Some(digest);
@@ -817,6 +960,22 @@ impl RoundMachine for Wxsd {
             }
         }
 
+        // Votes' BLS parts, one pairing per distinct body for the round.
+        if self.config.aggregate_votes {
+            let votes: Vec<Signed<Vote>> = signed
+                .iter()
+                .filter_map(|m| match m {
+                    WxsdMsg::Vote(v) if self.epoch_relevant(clock, v.body.epoch) => Some(v.clone()),
+                    _ => None,
+                })
+                .collect();
+            let authentic: Vec<Signed<Vote>> = votes
+                .into_iter()
+                .filter(|v| self.check_signed(ctx, domain::WXSD_VOTE, v))
+                .collect();
+            self.check_bls_votes(ctx, &authentic);
+        }
+
         // Signed protocol messages: record the first body per node and type,
         // turn a second one into equivocation evidence.
         for msg in signed {
@@ -837,6 +996,7 @@ impl RoundMachine for Wxsd {
                 WxsdMsg::Vote(v) => {
                     if !self.epoch_relevant(clock, v.body.epoch)
                         || !self.check_signed(ctx, domain::WXSD_VOTE, v)
+                        || (self.config.aggregate_votes && !self.bls_ok(v))
                     {
                         continue;
                     }
@@ -960,5 +1120,68 @@ impl Broadcast for Wxsd {
 
     fn termination_skew(&self) -> u32 {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polaris_core::Params;
+    use polaris_crypto::keyring;
+
+    /// Every message type survives the wire in both evidence modes; the
+    /// simulator passes messages by value, so only this catches a format
+    /// that cannot be decoded.
+    #[test]
+    fn messages_round_trip_through_the_wire() {
+        let (kr, keys) = keyring::generate(Params::new(4, 1).unwrap(), 7, 1);
+        let digest = value_digest(3, &Some(b"v".to_vec()));
+        let body = Vote {
+            epoch: 1,
+            ballot: Ballot::For(digest),
+        };
+        let plain = sign(&keys[0], kr.run_id, 3, domain::WXSD_VOTE, body);
+        let with_bls = sign_vote_bls(&keys[1], kr.run_id, 3, body);
+        let aggregate = MultiSig::aggregate(4, [(1, with_bls.bls.unwrap())]).unwrap();
+        let msgs = vec![
+            WxsdMsg::Vote(plain.clone()),
+            WxsdMsg::Vote(with_bls.clone()),
+            WxsdMsg::Propose(sign(
+                &keys[0],
+                kr.run_id,
+                3,
+                domain::WXSD_PROPOSE,
+                Proposal {
+                    epoch: 2,
+                    value: Some(b"v".to_vec()),
+                    evidence: Some(Evidence {
+                        epoch: 1,
+                        digest,
+                        proof: VoteProof::Individual(vec![plain.clone()]),
+                    }),
+                },
+            )),
+            WxsdMsg::Commit(sign(
+                &keys[2],
+                kr.run_id,
+                3,
+                domain::WXSD_COMMIT,
+                Commit {
+                    epoch: 1,
+                    evidence: Some(Evidence {
+                        epoch: 1,
+                        digest,
+                        proof: VoteProof::Aggregate(aggregate),
+                    }),
+                },
+            )),
+            WxsdMsg::Accuse(Accusation::sign(&keys[0], kr.run_id, 2)),
+            WxsdMsg::Equivocation(Box::new(Equivocation::Vote(plain, with_bls))),
+        ];
+        for m in msgs {
+            let bytes = wire::encode(&m).unwrap();
+            let back: WxsdMsg = wire::decode(&bytes).unwrap();
+            assert_eq!(back, m);
+        }
     }
 }
