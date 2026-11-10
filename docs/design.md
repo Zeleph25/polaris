@@ -137,6 +137,22 @@ with valid evidence for one digest; honest nodes terminate within one round
 of each other, so `termination_skew` is 1 and the compiler keeps the view
 running one round after deciding.
 
+### Aggregated vote evidence
+
+The paper's commit evidence is the signed votes themselves, `n` Ed25519
+signatures of about 100 bytes each, forwarded by every node to everyone in
+the Commit phase: `n^3` signatures per node per epoch, which made the
+Commit phase the heaviest round of the system (7 MB per node at `n = 32`).
+With `aggregate_votes`, a vote carries a BLS signature on the same body in
+addition to its Ed25519 one, and the evidence is one BLS multi-signature
+with the signer set, about a hundred bytes whatever `n`, verified in one
+pairing. The Ed25519 signature stays because it is cheap to check on
+receipt and is what equivocation evidence is built from; the BLS parts are
+verified per round with one pairing per distinct vote body and a one-by-one
+fallback, so that a garbage part never reaches an honest node's aggregate
+(which would make its evidence invalid and get it distrusted). Both modes
+are kept so that the improvement is measured, not assumed.
+
 ## The compiler
 
 `Compiler` (`polaris-proto/src/compiler.rs`) is Algorithm 1 as a round
@@ -271,7 +287,8 @@ that record it.
   adversary that extends every chain it sees, fabricates chains on fresh
   values and forges links, over `(n, t)` up to `(10, 7)` with 40 seeds each.
   Agreement holds every time and validity whenever the sender is honest.
-- WXSD (`crates/polaris-proto/tests/wxsd.rs`): the honest sender decides
+- WXSD (`crates/polaris-proto/tests/wxsd.rs`), every test in both evidence
+  modes: the honest sender decides
   in the first epoch at the predicted round; a silent sender gives bottom
   at the first honest leader with simultaneous termination; an
   equivocating sender is removed everywhere; a proposal withheld from one
@@ -312,4 +329,4 @@ that record it.
 Experiments on real hosts (the launcher is in place), a WXSD-specific
 adversary in the harness (Dolev-Strong has one), the honest-majority
 reference implementations from the project brief, and the improvements: accusations shared across views and with the
-WXSD trust graph, and aggregated trust-graph evidence.
+WXSD trust graph (aggregated vote evidence is done).

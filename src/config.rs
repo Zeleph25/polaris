@@ -62,6 +62,10 @@ pub struct NodeConfig {
     /// The broadcast of each view for `ic`, or of each instance for `parallel`.
     #[serde(default)]
     pub broadcast: BroadcastKind,
+    /// WXSD: votes signed with BLS as well and commit evidence sent as one
+    /// multi-signature instead of the votes themselves.
+    #[serde(default)]
+    pub aggregate_votes: bool,
     /// Input size in bytes for `ic` and `parallel`; 0 means the short label.
     #[serde(default)]
     pub input_bytes: usize,

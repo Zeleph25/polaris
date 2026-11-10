@@ -89,6 +89,9 @@ enum Cmd {
         /// Input size in bytes; 0 means the short label `input-of-<i>`.
         #[arg(long, default_value_t = 0)]
         input_bytes: usize,
+        /// WXSD: aggregated vote evidence (BLS multi-signatures).
+        #[arg(long)]
+        aggregate_votes: bool,
     },
     /// Run one node from a config file.
     Node {
@@ -120,6 +123,8 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         input_bytes: usize,
         #[arg(long)]
+        aggregate_votes: bool,
+        #[arg(long)]
         out: PathBuf,
     },
     /// Run an n-node cluster in this process over TCP and check its
@@ -143,6 +148,8 @@ enum Cmd {
         max_rounds: u32,
         #[arg(long, default_value_t = 0)]
         input_bytes: usize,
+        #[arg(long)]
+        aggregate_votes: bool,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -167,7 +174,7 @@ fn write_keys(
 /// Picks the machines of a protocol and broadcast and runs `$body` with
 /// them bound to `$m`; the one place that knows every combination.
 macro_rules! with_machines {
-    ($protocol:expr, $broadcast:expr, $config:expr, $input_bytes:expr, |$m:ident| $body:block) => {
+    ($protocol:expr, $broadcast:expr, $config:expr, $wxsd:expr, $input_bytes:expr, |$m:ident| $body:block) => {
         match ($protocol, $broadcast) {
             (Protocol::Echo, _) => {
                 let $m = EchoMachines;
@@ -183,7 +190,7 @@ macro_rules! with_machines {
             (Protocol::Ic, BroadcastKind::Wxsd) => {
                 let $m = IcWxsdMachines {
                     config: $config,
-                    wxsd: WxsdConfig::default(),
+                    wxsd: $wxsd,
                     input_bytes: $input_bytes,
                 };
                 $body
@@ -196,7 +203,7 @@ macro_rules! with_machines {
             }
             (Protocol::Parallel, BroadcastKind::Wxsd) => {
                 let $m = ParallelWxsdMachines {
-                    wxsd: WxsdConfig::default(),
+                    wxsd: $wxsd,
                     input_bytes: $input_bytes,
                 };
                 $body
@@ -240,6 +247,7 @@ async fn main() -> anyhow::Result<()> {
             broadcast,
             view_spacing,
             input_bytes,
+            aggregate_votes,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -269,6 +277,7 @@ async fn main() -> anyhow::Result<()> {
                     out_dir: "runs".into(),
                     protocol,
                     broadcast,
+                    aggregate_votes,
                     input_bytes,
                     view_spacing,
                     max_views: None,
@@ -319,11 +328,19 @@ async fn main() -> anyhow::Result<()> {
             };
             tracing::info!(node = cfg.id, "connected; waiting for round 0");
             let config = ic_config(kr.params, cfg.view_spacing, cfg.max_views);
-            with_machines!(cfg.protocol, cfg.broadcast, config, cfg.input_bytes, |m| {
-                let machine = m.make(&kr, &keys);
-                let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
-                report(&cfg, &outcome)?;
-            });
+            let wxsd = wxsd_config(cfg.aggregate_votes);
+            with_machines!(
+                cfg.protocol,
+                cfg.broadcast,
+                config,
+                wxsd,
+                cfg.input_bytes,
+                |m| {
+                    let machine = m.make(&kr, &keys);
+                    let outcome = run_node(cfg.id, &schedule, transport, start, machine).await;
+                    report(&cfg, &outcome)?;
+                }
+            );
         }
         Cmd::Sim {
             n,
@@ -336,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
             seed,
             max_rounds,
             input_bytes,
+            aggregate_votes,
             out,
         } => {
             let spec = SimSpec {
@@ -348,7 +366,8 @@ async fn main() -> anyhow::Result<()> {
                 run_id: 1,
             };
             let config = ic_config(Params::new(n, t)?, view_spacing, None);
-            with_machines!(protocol, broadcast, config, input_bytes, |m| {
+            let wxsd = wxsd_config(aggregate_votes);
+            with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 sim(&spec, &m, &out)?;
             });
         }
@@ -362,6 +381,7 @@ async fn main() -> anyhow::Result<()> {
             view_spacing,
             max_rounds,
             input_bytes,
+            aggregate_votes,
             out,
         } => {
             let spec = LocalSpec {
@@ -373,7 +393,8 @@ async fn main() -> anyhow::Result<()> {
                 run_id: 1,
             };
             let config = ic_config(Params::new(n, t)?, view_spacing, None);
-            with_machines!(protocol, broadcast, config, input_bytes, |m| {
+            let wxsd = wxsd_config(aggregate_votes);
+            with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 local(&spec, &m, out.as_deref()).await?;
             });
         }
@@ -393,6 +414,13 @@ fn resolve(peer: &str) -> anyhow::Result<std::net::SocketAddr> {
         .into_iter()
         .next()
         .with_context(|| format!("peer address {peer} resolves to nothing"))
+}
+
+fn wxsd_config(aggregate_votes: bool) -> WxsdConfig {
+    WxsdConfig {
+        aggregate_votes,
+        ..WxsdConfig::default()
+    }
 }
 
 fn ic_config(params: Params, view_spacing: Option<u32>, max_views: Option<u32>) -> CompilerConfig {
