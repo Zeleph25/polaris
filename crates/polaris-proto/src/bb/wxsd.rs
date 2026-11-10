@@ -352,6 +352,15 @@ impl Wxsd {
         }
     }
 
+    /// Starts from `acc` instead of the complete graph. Whoever seeds
+    /// instances must keep every honest node's set within one round of
+    /// every other's (the compiler gossips each accusation once).
+    pub fn with_accusations(mut self, acc: AccusationSet) -> Self {
+        self.acc = acc;
+        self.rebuild_graph();
+        self
+    }
+
     pub fn stats(&self) -> &WxsdStats {
         &self.stats
     }
@@ -1120,6 +1129,10 @@ impl Broadcast for Wxsd {
 
     fn termination_skew(&self) -> u32 {
         1
+    }
+
+    fn accusations(&self) -> Option<&AccusationSet> {
+        Some(&self.acc)
     }
 }
 

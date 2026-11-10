@@ -130,6 +130,22 @@ impl AccusationSet {
         self.by_target[usize::from(target)].keys().copied()
     }
 
+    /// Every accusation with its signature, by target then accuser.
+    pub fn iter(&self) -> impl Iterator<Item = Accusation> + '_ {
+        self.by_target.iter().enumerate().flat_map(|(b, m)| {
+            m.iter().map(move |(&a, &sig)| Accusation {
+                accuser: a,
+                target: NodeId::try_from(b).expect("fits"),
+                sig,
+            })
+        })
+    }
+
+    /// Adds every accusation of `other`; returns how many were new.
+    pub fn merge(&mut self, other: &AccusationSet) -> usize {
+        other.iter().filter(|a| self.insert(a)).count()
+    }
+
     /// The edges `(accuser, target)` of the accusation graph.
     pub fn edges(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
         self.by_target.iter().enumerate().flat_map(|(b, m)| {

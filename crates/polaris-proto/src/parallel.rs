@@ -14,6 +14,7 @@ use polaris_core::{Ctx, NodeId, Outgoing, Round, RoundMachine};
 use polaris_crypto::keyring::{Keyring, NodeKeys};
 use serde::{Deserialize, Serialize};
 
+use crate::accusations::AccusationSet;
 use crate::bb::Broadcast;
 use crate::bb::dolev_strong::DolevStrong;
 use crate::bb::wxsd::{Wxsd, WxsdConfig};
@@ -47,7 +48,7 @@ pub struct Parallel<B: Broadcast> {
 impl Parallel<DolevStrong> {
     pub fn with_dolev_strong(keyring: Arc<Keyring>, keys: Arc<NodeKeys>, input: Vec<u8>) -> Self {
         let (kr, ks) = (keyring.clone(), keys.clone());
-        let make_bb: MakeBroadcast<DolevStrong> = Box::new(move |sender, instance, input| {
+        let make_bb: MakeBroadcast<DolevStrong> = Box::new(move |sender, instance, input, _| {
             DolevStrong::new(kr.clone(), ks.clone(), sender, instance, input)
         });
         Self::new(keyring, keys, make_bb, input)
@@ -62,7 +63,7 @@ impl Parallel<Wxsd> {
         input: Vec<u8>,
     ) -> Self {
         let (kr, ks) = (keyring.clone(), keys.clone());
-        let make_bb: MakeBroadcast<Wxsd> = Box::new(move |sender, instance, input| {
+        let make_bb: MakeBroadcast<Wxsd> = Box::new(move |sender, instance, input, _| {
             Wxsd::new(kr.clone(), ks.clone(), sender, instance, input, wxsd)
         });
         Self::new(keyring, keys, make_bb, input)
@@ -83,7 +84,12 @@ impl<B: Broadcast> Parallel<B> {
             .map(|i| {
                 let sender = NodeId::try_from(i).expect("fits");
                 let input = (sender == keys.id).then(|| input.clone());
-                Some(make_bb(sender, u64::from(sender), input))
+                Some(make_bb(
+                    sender,
+                    u64::from(sender),
+                    input,
+                    &AccusationSet::new(n),
+                ))
             })
             .collect();
         let termination_skew = instances[0].as_ref().expect("built").termination_skew();

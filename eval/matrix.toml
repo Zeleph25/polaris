@@ -251,3 +251,34 @@ protocol = "parallel"
 broadcast = "wxsd"
 aggregate_votes = true
 sizes = [[8, 2], [16, 4]]
+
+# Shared accusations (share_accusations = true): every LearnOrExpose and
+# WXSD instance starts from the accusations of the finished ones.
+
+[[experiment]]
+name = "ic-wxsd-attack-shared"
+mode = "sim"
+adversary = "mixed"
+protocol = "ic"
+broadcast = "wxsd"
+share_accusations = true
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-ds-attack-shared"
+mode = "sim"
+adversary = "mixed"
+protocol = "ic"
+broadcast = "dolev-strong"
+share_accusations = true
+sizes = [[8, 2], [16, 4], [32, 16]]
+
+[[experiment]]
+name = "ic-wxsd-attack-seq-shared"
+mode = "sim"
+adversary = "mixed"
+protocol = "ic"
+broadcast = "wxsd"
+view_spacing = 0
+share_accusations = true
+sizes = [[8, 2], [16, 4], [32, 16]]

@@ -103,6 +103,24 @@ impl LearnOrExpose {
         }
     }
 
+    /// Starts from `acc` instead of an empty accusation set: accusations
+    /// are scoped to the run, so those of earlier views still stand, and a
+    /// party they disconnect is exposed at once. Whoever seeds instances
+    /// must keep every honest node's set within one round of every other's
+    /// (the compiler gossips each accusation once), which is what the
+    /// one-round-of-lag invariant of the proofs needs.
+    pub fn with_accusations(
+        keyring: Arc<Keyring>,
+        keys: Arc<NodeKeys>,
+        leader: NodeId,
+        entries: Entries,
+        acc: AccusationSet,
+    ) -> Self {
+        let mut loe = Self::new(keyring, keys, leader, entries);
+        loe.acc = acc;
+        loe
+    }
+
     pub fn leader(&self) -> NodeId {
         self.leader
     }

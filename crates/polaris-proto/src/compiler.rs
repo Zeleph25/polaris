@@ -33,6 +33,7 @@ use polaris_crypto::keyring::{Keyring, NodeKeys};
 use polaris_crypto::{ed25519, hex};
 use serde::{Deserialize, Serialize};
 
+use crate::accusations::{self, Accusation, AccusationSet};
 use crate::bb::Broadcast;
 use crate::bb::dolev_strong::DolevStrong;
 use crate::bb::wxsd::{Wxsd, WxsdConfig};
@@ -51,6 +52,13 @@ pub struct CompilerConfig {
     pub view_spacing: u32,
     /// Views started at most; a run that exhausts them never decides.
     pub max_views: View,
+    /// Carry the accusations of every finished LearnOrExpose and broadcast
+    /// instance into the next ones, so that a Byzantine node cut off once
+    /// stays cut off, instead of every instance starting from the complete
+    /// graph as in the paper. Each accusation is gossiped once at the run
+    /// level when it is learned, which keeps every honest node's set within
+    /// one round of every other's, the invariant seeded instances rely on.
+    pub share_accusations: bool,
 }
 
 impl CompilerConfig {
@@ -58,7 +66,13 @@ impl CompilerConfig {
         Self {
             view_spacing: params.loe_rounds(),
             max_views: View::MAX,
+            share_accusations: false,
         }
+    }
+
+    pub fn sharing_accusations(mut self) -> Self {
+        self.share_accusations = true;
+        self
     }
 
     /// `c`, or `0` for sequential views.
@@ -81,8 +95,17 @@ impl CompilerConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IcMsg<M> {
     Disclose(Disclosure),
-    Loe { view: View, msg: LoeMsg },
-    Bb { view: View, msg: M },
+    Loe {
+        view: View,
+        msg: LoeMsg,
+    },
+    Bb {
+        view: View,
+        msg: M,
+    },
+    /// Run-level gossip of an accusation learned in a finished instance,
+    /// when accusations are shared; forwarded once by every node.
+    Accuse(Accusation),
 }
 
 /// The decided vector and the view it came from. Serializes the values as
@@ -107,11 +130,15 @@ pub struct IcStats {
     pub views_started: u32,
     /// Views whose broadcast delivered bottom or an invalid vector.
     pub views_skipped: u32,
+    /// Accusations this node signed in its LearnOrExpose instances.
+    pub accusations_sent: u64,
 }
 
-/// Builds the broadcast of a view: `(sender, instance, input)`, with the
-/// input `Some` at the sender only.
-pub type MakeBroadcast<B> = Box<dyn Fn(NodeId, u64, Option<Vec<u8>>) -> B + Send>;
+/// Builds the broadcast of a view: `(sender, instance, input, accusations)`,
+/// with the input `Some` at the sender only and the accusations to start
+/// from (empty unless they are shared; ignored by a broadcast without a
+/// trust graph).
+pub type MakeBroadcast<B> = Box<dyn Fn(NodeId, u64, Option<Vec<u8>>, &AccusationSet) -> B + Send>;
 
 enum Phase<B> {
     Loe(Box<LearnOrExpose>),
@@ -134,6 +161,8 @@ pub struct Compiler<B: Broadcast> {
     input: Option<Vec<u8>>,
     /// Every disclosure this node holds; `VerifyVec_in` holds at all times.
     known: Entries,
+    /// Accusations of finished instances, when they are shared.
+    shared: AccusationSet,
     views: BTreeMap<View, ViewState<B>>,
     /// Delivered broadcasts, by view; `None` for a skipped view.
     results: BTreeMap<View, Option<VerifiableVector>>,
@@ -156,7 +185,7 @@ impl Compiler<DolevStrong> {
         input: Vec<u8>,
     ) -> Self {
         let (kr, ks) = (keyring.clone(), keys.clone());
-        let make_bb: MakeBroadcast<DolevStrong> = Box::new(move |sender, instance, input| {
+        let make_bb: MakeBroadcast<DolevStrong> = Box::new(move |sender, instance, input, _| {
             DolevStrong::new(kr.clone(), ks.clone(), sender, instance, input)
         });
         Self::new(keyring, keys, config, make_bb, input)
@@ -172,8 +201,9 @@ impl Compiler<Wxsd> {
         input: Vec<u8>,
     ) -> Self {
         let (kr, ks) = (keyring.clone(), keys.clone());
-        let make_bb: MakeBroadcast<Wxsd> = Box::new(move |sender, instance, input| {
+        let make_bb: MakeBroadcast<Wxsd> = Box::new(move |sender, instance, input, acc| {
             Wxsd::new(kr.clone(), ks.clone(), sender, instance, input, wxsd)
+                .with_accusations(acc.clone())
         });
         Self::new(keyring, keys, config, make_bb, input)
     }
@@ -189,7 +219,7 @@ impl<B: Broadcast> Compiler<B> {
     ) -> Self {
         let n = keyring.n();
         let sub = Ctx::new(keys.id, keyring.params, keyring.run_id);
-        let termination_skew = make_bb(0, 0, None).termination_skew();
+        let termination_skew = make_bb(0, 0, None, &AccusationSet::new(n)).termination_skew();
         Self {
             keyring,
             keys,
@@ -198,6 +228,7 @@ impl<B: Broadcast> Compiler<B> {
             termination_skew,
             input: Some(input),
             known: vec![None; n],
+            shared: AccusationSet::new(n),
             views: BTreeMap::new(),
             results: BTreeMap::new(),
             scan: 1,
@@ -271,12 +302,22 @@ impl<B: Broadcast> Compiler<B> {
 
     fn start_view(&mut self, view: View, round: Round) -> Vec<Outgoing<IcMsg<B::Msg>>> {
         let leader = self.leader(view);
-        let mut loe = LearnOrExpose::new(
-            self.keyring.clone(),
-            self.keys.clone(),
-            leader,
-            self.known.clone(),
-        );
+        let mut loe = if self.config.share_accusations {
+            LearnOrExpose::with_accusations(
+                self.keyring.clone(),
+                self.keys.clone(),
+                leader,
+                self.known.clone(),
+                self.shared.clone(),
+            )
+        } else {
+            LearnOrExpose::new(
+                self.keyring.clone(),
+                self.keys.clone(),
+                leader,
+                self.known.clone(),
+            )
+        };
         let out = wrap_loe(view, loe.start(&mut self.sub));
         self.views.insert(
             view,
@@ -358,11 +399,13 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
         self.first_round.get_or_insert(round);
 
         let mut discs = Vec::new();
+        let mut accs = Vec::new();
         let mut loe_in: BTreeMap<View, Vec<(NodeId, LoeMsg)>> = BTreeMap::new();
         let mut bb_in: BTreeMap<View, Vec<(NodeId, B::Msg)>> = BTreeMap::new();
         for (from, msg) in inbox {
             match msg {
                 IcMsg::Disclose(d) => discs.push(d),
+                IcMsg::Accuse(a) => accs.push(a),
                 IcMsg::Loe { view, msg } => loe_in.entry(view).or_default().push((from, msg)),
                 IcMsg::Bb { view, msg } => bb_in.entry(view).or_default().push((from, msg)),
             }
@@ -370,6 +413,16 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
         self.take_disclosures(ctx, discs);
 
         let mut out = Vec::new();
+        if self.config.share_accusations && !accs.is_empty() {
+            let started = Instant::now();
+            let ok = accusations::verify_many(&self.keyring, &accs);
+            ctx.metrics.verified(accs.len() as u64, started.elapsed());
+            for (a, ok) in accs.into_iter().zip(ok) {
+                if ok && self.shared.insert(&a) {
+                    out.push(Outgoing::all(IcMsg::Accuse(a)));
+                }
+            }
+        }
         let loe_rounds = self.keyring.params.loe_rounds();
         let mut finished = Vec::new();
         let views: Vec<View> = self.views.keys().copied().collect();
@@ -384,7 +437,16 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
                         let submit = (state.leader == self.keys.id)
                             .then(|| loe.output().map(|vv| wire::encode(vv).expect("encodes")))
                             .flatten();
-                        let mut bb = (self.make_bb)(state.leader, u64::from(view), submit);
+                        self.stats.accusations_sent += loe.stats().accusations_sent;
+                        if self.config.share_accusations {
+                            for a in loe.accusations().iter() {
+                                if self.shared.insert(&a) {
+                                    out.push(Outgoing::all(IcMsg::Accuse(a)));
+                                }
+                            }
+                        }
+                        let mut bb =
+                            (self.make_bb)(state.leader, u64::from(view), submit, &self.shared);
                         out.extend(wrap_bb(view, bb.start(&mut self.sub)));
                         state.phase = Phase::Bb(bb);
                         self.learn_from(&entries);
@@ -395,6 +457,15 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
                     out.extend(wrap_bb(view, bb.end_round(&mut self.sub, round, inbox)));
                     if let Some(delivered) = bb.output() {
                         finished.push((view, delivered.clone()));
+                        if self.config.share_accusations
+                            && let Some(acc) = bb.accusations()
+                        {
+                            for a in acc.iter() {
+                                if self.shared.insert(&a) {
+                                    out.push(Outgoing::all(IcMsg::Accuse(a)));
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -9,6 +9,8 @@
 
 use polaris_core::{NodeId, RoundMachine};
 
+use crate::accusations::AccusationSet;
+
 pub mod dolev_strong;
 pub mod naive;
 pub mod wxsd;
@@ -19,4 +21,10 @@ pub trait Broadcast: RoundMachine<Output = Option<Vec<u8>>> {
     /// Delta_sim: honest nodes terminate within this many rounds of each
     /// other. The compiler waits that long after deciding before it halts.
     fn termination_skew(&self) -> u32;
+
+    /// The accusations this instance holds, for a broadcast built on a
+    /// trust graph; the compiler carries them into later views.
+    fn accusations(&self) -> Option<&AccusationSet> {
+        None
+    }
 }
