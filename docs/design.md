@@ -2,7 +2,10 @@
 
 What polaris is built from, and the decisions that are not forced by the
 paper. The paper is *Parallel Broadcast from Single-Source Broadcast, for
-Free?*; algorithm and claim numbers below refer to it.
+Free?*; algorithm and claim numbers below refer to it. An earlier version is
+Civit, Emdin and Guerraoui, *Constant-Round Interactive Consistency in
+Dishonest Majority, or with Quadratic Communication in Honest Majority*
+([ePrint 2026/1146](https://eprint.iacr.org/2026/1146)).
 
 ## The problem
 
@@ -179,11 +182,16 @@ other's of one round earlier; an instance's own forwarding keeps that
 within the instance, but an instance's last round forwards nothing, so the
 compiler gossips each accusation once at the run level when it learns it
 from a finished instance (`IcMsg::Accuse`, verified and forwarded once by
-every node), which keeps the shared sets within one round of each other
-across instance boundaries. A first version re-sent the whole set at every
+every node) and hands it to every instance already running, which keeps
+the sets of every running instance within one round of each other across
+instance boundaries. A first version re-sent the whole set at every
 instance start instead, which cost about `n^2` times the set per view and
 was measured before being replaced. The paper starts every instance from
-the complete graph; both modes are kept so that the gain is measured.
+the complete graph; both modes are kept so that the effect is measured. It
+is a gain over Dolev-Strong and a loss over WXSD, where a Byzantine leader
+accused in LearnOrExpose is distrusted from the start of its own broadcast,
+which then runs until an honest epoch leader instead of delivering the
+leader's vector (see the README).
 
 Sub-machines get their own context: they record signature work into it and
 also call `decided`, which must not count as the compiler's decision, so
@@ -234,7 +242,13 @@ that record it.
    LearnOrExpose instance is running at a time; `CompilerConfig` makes `c`
    a parameter so that denser pipelining can be measured, and `c = 0` makes
    the views sequential: the next starts only once the previous broadcast
-   has delivered without a decision. Pipelining is the paper's design and
+   has delivered without a decision at every honest node. Over
+   Dolev-Strong that is the round after delivery; WXSD's honest nodes may
+   terminate a round apart, all on the commits of the same epoch and at the
+   latest in the epoch after it, so the next view starts when that epoch
+   ends (`Broadcast::settled_round`). Starting right after the local
+   delivery let honest nodes drift apart and disagree. Pipelining is the
+   paper's design and
    buys a view of latency per Byzantine leader; the measured price is every
    view started in vain, about 2.5 times the bytes at 10 KB inputs when the
    first leader is honest (see the README).
@@ -342,8 +356,8 @@ that record it.
 ## Next
 
 Experiments on real hosts (the launcher is in place), a WXSD-specific
-adversary in the harness (Dolev-Strong has one), the honest-majority
-reference implementations from the project brief, the Monte Carlo
-baseline, a long soak of the complete system, and the report. The three
-improvements of the plan (accusations shared across views and with the
-WXSD trust graph, aggregated vote evidence) are in and measured.
+adversary in the harness (Dolev-Strong has one), a measured comparison
+with honest-majority implementations, the Monte Carlo baseline, and a long
+soak of the complete system. The improvements (accusations shared across
+views and with the WXSD trust graph, aggregated vote evidence, sequential
+views) are in and measured.
