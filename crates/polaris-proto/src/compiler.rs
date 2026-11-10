@@ -46,9 +46,11 @@ pub struct CompilerConfig {
     /// Rounds between the starts of two consecutive views. The default is
     /// `R`, so that at most one LearnOrExpose instance runs at a time. `0`
     /// makes the views sequential: the next one starts only once the
-    /// previous one's broadcast has delivered without a decision, which
-    /// spares the work of views that never get used when the leader is
-    /// honest and costs a whole view of latency when it is not.
+    /// previous one's broadcast has delivered without a decision at every
+    /// honest node (for WXSD, at the end of the epoch after the one it
+    /// terminated on), which spares the work of views that never get used
+    /// when the leader is honest and costs a whole view of latency when it
+    /// is not.
     pub view_spacing: u32,
     /// Views started at most; a run that exhausts them never decides.
     pub max_views: View,
@@ -168,6 +170,9 @@ pub struct Compiler<B: Broadcast> {
     results: BTreeMap<View, Option<VerifiableVector>>,
     /// The next view the ordered scan looks at.
     scan: View,
+    /// With sequential views, the round after which the last broadcast has
+    /// delivered at every honest node; the next view starts in the round after.
+    settled: Option<Round>,
     first_round: Option<Round>,
     /// The sub-machines' context; its metrics are absorbed every round.
     sub: Ctx,
@@ -232,6 +237,7 @@ impl<B: Broadcast> Compiler<B> {
             views: BTreeMap::new(),
             results: BTreeMap::new(),
             scan: 1,
+            settled: None,
             first_round: None,
             sub,
             output: None,
@@ -251,14 +257,19 @@ impl<B: Broadcast> Compiler<B> {
 
     /// Whether `view` starts at `round + 1`: round 0 is the disclosure
     /// round, view 1 starts at round 1, later views `c` rounds apart, or
-    /// right after the previous view's broadcast when views are sequential.
+    /// once the previous view's broadcast has settled when views are
+    /// sequential.
     fn starts_next_round(&self, view: View, round: Round) -> bool {
         let since = round + 1 - self.first_round.expect("started");
         if view == 1 {
             return since == 1;
         }
         match self.config.view_spacing {
-            0 => self.views.is_empty() && self.results.is_empty(),
+            0 => {
+                self.views.is_empty()
+                    && self.results.is_empty()
+                    && self.settled.is_some_and(|s| round >= s)
+            }
             c => since >= 1 && (since - 1).is_multiple_of(c),
         }
     }
@@ -290,6 +301,22 @@ impl<B: Broadcast> Compiler<B> {
                 *slot = Some(d);
             }
         }
+    }
+
+    /// Adds an accusation to the run's set; if it is new, gossips it and
+    /// hands it to every running instance, which keeps every honest node's
+    /// instances within one round of every other's.
+    fn share(&mut self, a: Accusation, out: &mut Vec<Outgoing<IcMsg<B::Msg>>>) {
+        if !self.shared.insert(&a) {
+            return;
+        }
+        for state in self.views.values_mut() {
+            match &mut state.phase {
+                Phase::Loe(loe) => loe.absorb_accusations(std::slice::from_ref(&a)),
+                Phase::Bb(bb) => bb.absorb_accusations(std::slice::from_ref(&a)),
+            }
+        }
+        out.push(Outgoing::all(IcMsg::Accuse(a)));
     }
 
     fn learn_from(&mut self, entries: &Entries) {
@@ -418,13 +445,14 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
             let ok = accusations::verify_many(&self.keyring, &accs);
             ctx.metrics.verified(accs.len() as u64, started.elapsed());
             for (a, ok) in accs.into_iter().zip(ok) {
-                if ok && self.shared.insert(&a) {
-                    out.push(Outgoing::all(IcMsg::Accuse(a)));
+                if ok {
+                    self.share(a, &mut out);
                 }
             }
         }
         let loe_rounds = self.keyring.params.loe_rounds();
         let mut finished = Vec::new();
+        let mut learned = Vec::new();
         let views: Vec<View> = self.views.keys().copied().collect();
         for view in views {
             let state = self.views.get_mut(&view).expect("listed");
@@ -439,11 +467,7 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
                             .flatten();
                         self.stats.accusations_sent += loe.stats().accusations_sent;
                         if self.config.share_accusations {
-                            for a in loe.accusations().iter() {
-                                if self.shared.insert(&a) {
-                                    out.push(Outgoing::all(IcMsg::Accuse(a)));
-                                }
-                            }
+                            learned.extend(loe.accusations().iter());
                         }
                         let mut bb =
                             (self.make_bb)(state.leader, u64::from(view), submit, &self.shared);
@@ -457,21 +481,25 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
                     out.extend(wrap_bb(view, bb.end_round(&mut self.sub, round, inbox)));
                     if let Some(delivered) = bb.output() {
                         finished.push((view, delivered.clone()));
+                        if self.config.view_spacing == 0 {
+                            self.settled = Some(bb.settled_round(round));
+                        }
                         if self.config.share_accusations
                             && let Some(acc) = bb.accusations()
                         {
-                            for a in acc.iter() {
-                                if self.shared.insert(&a) {
-                                    out.push(Outgoing::all(IcMsg::Accuse(a)));
-                                }
-                            }
+                            learned.extend(acc.iter());
                         }
                     }
                 }
             }
         }
+        for (view, _) in &finished {
+            self.views.remove(view);
+        }
+        for a in learned {
+            self.share(a, &mut out);
+        }
         for (view, delivered) in finished {
-            self.views.remove(&view);
             let accepted = self.accept(ctx, delivered);
             if accepted.is_none() {
                 self.stats.views_skipped += 1;
@@ -494,6 +522,7 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
         if self.output.is_none() {
             let next = self.stats.views_started + 1;
             if next <= self.config.max_views && self.starts_next_round(next, round) {
+                self.settled = None;
                 out.extend(self.start_view(next, round));
             }
         }
