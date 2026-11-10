@@ -7,7 +7,10 @@ Broadcast, for Free?* for t <= (1 - epsilon) n corruptions: in each view a
 PRF-elected leader assembles one verifiable vector with LearnOrExpose and
 broadcasts it once, instead of running n parallel Byzantine broadcasts. The
 goal is to measure that protocol against n parallel broadcasts and a
-specialized parallel-broadcast protocol.
+specialized parallel-broadcast protocol. An earlier version of the paper is
+Civit, Emdin and Guerraoui, *Constant-Round Interactive Consistency in
+Dishonest Majority, or with Quadratic Communication in Honest Majority*
+([ePrint 2026/1146](https://eprint.iacr.org/2026/1146)).
 
 Current state: the foundations (keys, drivers, metrics), the accusation
 graph and LearnOrExpose, the Dolev-Strong and WXSD broadcasts, the
@@ -181,17 +184,19 @@ node, all honest:
 | | pipelined views (c = R) | sequential views (c = 0) | n parallel |
 | --- | --- | --- | --- |
 | over Dolev-Strong | 13.4 MB | 5.4 MB | 2.7 MB |
-| over WXSD | 19.7 MB | 6.1 MB | 10.7 MB |
+| over WXSD, aggregated evidence | 19.3 MB | 5.7 MB | 4.2 MB |
 
 With pipelining, views 2 and 3 start while view 1 is about to succeed, and
 every view's LearnOrExpose sends all `n` disclosures it holds to everyone
-(`n^2 L` bytes per node, the paper's lines 3 to 5); the decision round is
+(`n^2 L` bytes per node in its first round); the decision round is
 the same either way. What remains with sequential views is one such round
 plus the vector forwarded once by every node (another `n^2 L`), which is
-twice what n parallel Dolev-Strong sends when nobody attacks. Under the
-Dolev-Strong attack at n = 32, sequential views decide in 29 +- 13 rounds
-against 24 +- 3 pipelined: a whole view of latency per Byzantine leader,
-for a third of the bytes.
+twice what n parallel Dolev-Strong sends when nobody attacks. Under attack
+(t Byzantine nodes, each silent with probability 0.3 and otherwise
+delivering to a random half of the nodes; 10 seeds) at n = 32, t = 16,
+sequential views over Dolev-Strong decide in 24.2 +- 7.0 rounds against
+22.5 +- 1.6 pipelined, for a quarter of the bytes (0.40 MB against
+1.69 MB): a whole view of latency per failed view.
 
 Aggregated vote evidence (`--aggregate-votes`: one BLS multi-signature per
 commit instead of the signed votes) takes WXSD's Commit phase, the heaviest
@@ -203,30 +208,36 @@ with every node honest:
 | polaris over WXSD, n = 16 | 677 KB | 279 KB |
 | polaris over WXSD, n = 32 | 4.3 MB | 1.1 MB |
 | n parallel WXSD, n = 16 | 8.0 MB | 1.4 MB |
-| n parallel WXSD, n = 32 | 115 MB | 13.6 MB |
+| n parallel WXSD, n = 32 | 116 MB | 10.6 MB |
 
 Signature work moves the other way at small n (a pairing costs twenty
 Ed25519 checks, and every vote now gets one per distinct body per round),
 and comes out ahead from n = 32 on.
 
 Shared accusations (`--share-accusations`: every instance starts from the
-accusations of the finished ones, gossiped once at the run level) pay off
-under attack, bytes per honest node with t Byzantine nodes, silent or
-selective:
+accusations of the finished ones, gossiped once at the run level and handed
+to the instances already running) pay off over Dolev-Strong and cost rounds
+over WXSD. Mean decision round and bytes per honest node under the same
+attack, 10 seeds:
 
-| | paper (fresh graph per instance) | shared |
+| | fresh graph per instance | shared |
 | --- | --- | --- |
-| over Dolev-Strong, n = 32 | 1.52 MB, 21k messages | 1.06 MB, 13k messages |
-| over WXSD, n = 16 | 266 KB | 225 KB |
-| over WXSD, n = 32 | 1.74 MB, view 1 | 2.2 MB +- 1.7 MB, views 1 to 2 |
+| over Dolev-Strong, n = 32, t = 16 | 22.5 rounds, 1.69 MB | 22.5 rounds, 1.05 MB |
+| over Dolev-Strong, n = 32, t = 24 | 34.9 rounds, 3.28 MB | 34.9 rounds, 1.87 MB |
+| over WXSD, aggregated, n = 32, t = 16 | 19.0 rounds, 3.26 MB | 26.5 rounds, 2.87 MB |
+| over WXSD, aggregated, n = 32, t = 24 | 33.9 rounds, 5.29 MB | 123.9 rounds, 8.60 MB |
 
-The WXSD row at n = 32 is three seeds where in one a Byzantine view-1
-leader delivering selectively gets its vector through on a fresh graph
-and is cut off on a seeded one, which costs a view; more seeds would
-settle the average, the mechanism is not in doubt. The n parallel WXSD run at n = 32 only
-completes with aggregation; with 32 processes on two cores at 500 ms
-rounds it still reports late messages, so its numbers are a load artifact
-and belong on more hosts.
+Carried into WXSD, the accusations a Byzantine leader drew in its
+LearnOrExpose make it distrusted from the first round of its own broadcast,
+which then runs until an epoch with an honest epoch leader and delivers
+bottom. On a fresh graph, a Byzantine leader that runs the protocol, even
+delivering selectively, usually gets its vector through in the first epoch
+and the view decides. Views decide in order, so one such view holds back
+every later one: at t = 24, one seed in ten took 649 rounds.
+
+The n parallel WXSD network run at n = 32 only completes with aggregation;
+with 32 processes on two cores at 500 ms rounds it still reports late
+messages, so its wall-clock numbers belong on more hosts.
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 
