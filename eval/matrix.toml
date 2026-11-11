@@ -2,7 +2,7 @@
 # sizes `reps` times, either with one process per node on this host (mode
 # "net", all nodes honest) or in the simulator with Byzantine nodes (mode
 # "sim": `byzantine` of them, default t, playing `adversary`: silent,
-# selective, mixed or ds-chaos). `input_bytes` sets every node's input
+# selective, mixed, ds-chaos or wxsd-chaos). `input_bytes` sets every node's input
 # size (0: the short label). Results go to <out>/<name>/n<n>-t<t>/rep<k>/.
 
 [defaults]
@@ -88,6 +88,27 @@ adversary = "ds-chaos"
 protocol = "parallel"
 broadcast = "dolev-strong"
 sizes = [[8, 2], [16, 4], [32, 16]]
+
+# WXSD under its own attack: equivocating leaders and voters, BLS parts and
+# evidence that do not verify, late votes and commits, garbage signatures.
+
+[[experiment]]
+name = "ic-wxsd-chaos"
+mode = "sim"
+adversary = "wxsd-chaos"
+protocol = "ic"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 4], [16, 8]]
+
+[[experiment]]
+name = "parallel-wxsd-chaos"
+mode = "sim"
+adversary = "wxsd-chaos"
+protocol = "parallel"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[8, 4], [16, 8]]
 
 # Input size: one vector per view against n values, with 1 KB and 10 KB
 # inputs (all honest, on the network).

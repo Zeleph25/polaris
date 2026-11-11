@@ -341,22 +341,27 @@ that record it.
   the predicted rounds over both broadcasts, and the random omission
   adversaries: agreement on the whole vector, every honest input in place,
   termination within one round.
+- The protocol-specific adversaries (`tests/adversaries.rs`): the
+  Dolev-Strong adversary against the compiler and the baseline over
+  Dolev-Strong, the WXSD adversary against both over WXSD, with and
+  without aggregated evidence, and against sequential views with shared
+  accusations: agreement on the whole vector and every honest input in
+  place.
 - Criterion benchmarks for the signatures, the multi-signatures, key file
   loading, `MakeGraph` and accusation verification.
 - The evaluation harness (`eval/`): the experiment matrix run with one
   process per node, on this host or spread over ssh hosts, for the honest
   runs and in the simulator with Byzantine
   nodes for the runs under attack (generic silent and selective nodes, and
-  the Dolev-Strong adversary of `src/adversaries.rs`, which bounds itself
-  to one reaction per instance and round), aggregated into tables and
-  plots;
+  the Dolev-Strong and WXSD adversaries of `src/adversaries.rs`, which
+  bound themselves to one reaction per instance and round), aggregated
+  into tables and plots;
   `run.json` per run records the exit codes, and the aggregator checks that
   every (honest) node of a run decided the same output.
 
 ## Next
 
-Experiments on real hosts (the launcher is in place), a WXSD-specific
-adversary in the harness (Dolev-Strong has one), a measured comparison
+Experiments on real hosts (the launcher is in place), a measured comparison
 with honest-majority implementations, the Monte Carlo baseline, and a long
 soak of the complete system. The improvements (accusations shared across
 views and with the WXSD trust graph, aggregated vote evidence, sequential

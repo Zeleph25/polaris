@@ -16,7 +16,7 @@ use polaris_proto::parallel::Parallel;
 use polaris_sim::{Adversary, Node, Simulator, Transcript};
 use rand_chacha::ChaCha12Rng;
 
-use crate::adversaries::DsChaos;
+use crate::adversaries::{DsChaos, WxsdChaos};
 use serde::Serialize;
 
 use crate::net::Transport;
@@ -53,6 +53,16 @@ pub trait Machines: Send + Sync {
         _keyring: &Arc<Keyring>,
         _keys: &NodeKeys,
         _byzantine: &[Arc<NodeKeys>],
+        _rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        None
+    }
+
+    /// The WXSD adversary for this protocol, if it runs WXSD.
+    fn wxsd_adversary(
+        &self,
+        _keyring: &Arc<Keyring>,
+        _keys: &NodeKeys,
         _rng: ChaCha12Rng,
     ) -> Option<Box<dyn Adversary<Self::M>>> {
         None
@@ -149,6 +159,20 @@ impl Machines for IcWxsdMachines {
             ic_input(keys.id, self.input_bytes),
         )
     }
+    fn wxsd_adversary(
+        &self,
+        keyring: &Arc<Keyring>,
+        keys: &NodeKeys,
+        rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        Some(Box::new(WxsdChaos::new(
+            self.make(keyring, keys),
+            Arc::new(keys.clone()),
+            keyring.run_id,
+            keyring.n(),
+            rng,
+        )))
+    }
 }
 
 pub struct ParallelDsMachines {
@@ -196,6 +220,20 @@ impl Machines for ParallelWxsdMachines {
             self.wxsd,
             ic_input(keys.id, self.input_bytes),
         )
+    }
+    fn wxsd_adversary(
+        &self,
+        keyring: &Arc<Keyring>,
+        keys: &NodeKeys,
+        rng: ChaCha12Rng,
+    ) -> Option<Box<dyn Adversary<Self::M>>> {
+        Some(Box::new(WxsdChaos::new(
+            self.make(keyring, keys),
+            Arc::new(keys.clone()),
+            keyring.run_id,
+            keyring.n(),
+            rng,
+        )))
     }
 }
 

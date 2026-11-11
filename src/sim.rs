@@ -38,6 +38,11 @@ pub enum AdversaryKind {
     /// signature and scatter it, and chains on fresh values are fabricated
     /// whenever enough Byzantine signers exist.
     DsChaos,
+    /// WXSD only: leaders propose two values, voters equivocate, send BLS
+    /// parts that do not verify or vote late, committers send evidence that
+    /// does not verify or commit late, and every Byzantine node sends one
+    /// garbage-signed message per instance and round.
+    WxsdChaos,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +85,13 @@ fn make_node<F: Machines>(
                 .ds_adversary(kr, keys, byzantine_keys, own)
                 .map(Node::Byzantine)
                 .context("the ds-chaos adversary needs a protocol over Dolev-Strong");
+        }
+        AdversaryKind::WxsdChaos => {
+            let own = ChaCha12Rng::seed_from_u64(rng.random());
+            return machines
+                .wxsd_adversary(kr, keys, own)
+                .map(Node::Byzantine)
+                .context("the wxsd-chaos adversary needs a protocol over WXSD");
         }
     };
     if silent {

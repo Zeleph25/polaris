@@ -272,7 +272,10 @@ the nodes only), `mixed`, or `ds-chaos` (Dolev-Strong only: senders
 equivocate with fabricated values, forwarders extend every chain with
 their signature and scatter it, and well-formed chains with garbage
 signatures are flooded so that every honest node verifies and rejects
-them); honest nodes get the same files as on the network, and the
+them), or `wxsd-chaos` (WXSD only: leaders propose two values, voters
+equivocate, attach BLS parts that do not verify or vote late, committers
+attach evidence that does not verify or commit late, and garbage-signed
+copies of seen messages are flooded); honest nodes get the same files as on the network, and the
 simulator counts rounds, messages, bytes and signature work exactly, so
 only wall-clock time is missing from those rows:
 
