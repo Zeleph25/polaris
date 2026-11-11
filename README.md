@@ -289,6 +289,45 @@ cores. For several hosts, generate the clusters
 with `genconfig`, edit the `peers` lists, and start the nodes with any
 remote launcher; the aggregator only needs the `runs/` directories.
 
+### Against honest-majority protocols
+
+`eval/honest_majority.py` runs Apollo and Sync HotStuff from the Apollo
+artefact ([libchatter-rs](https://github.com/adithyabhatkajake/libchatter-rs),
+built with `cargo build --release`) on loopback, f = (n - 1) / 2, all honest,
+Delta set to polaris's 500 ms round: one client submits n 16-byte
+transactions, the blocks hold n transactions, and the run ends when the
+client reports them committed. With `--polaris`, it also runs polaris
+(t = n/2 and t = 3n/4, all honest) on loopback, so that the bytes on the loopback
+interface are counted the same way for every system:
+
+```
+python3 eval/honest_majority.py --chatter ../libchatter-rs \
+    --polaris target/release/polaris --out eval/results/honest
+```
+
+On two cores, three runs each (bytes per process on loopback, TLS and TCP
+headers included; polaris's time is its round schedule as measured by the
+network runs above):
+
+| | n = 8 | n = 16 | n = 32 |
+| --- | --- | --- | --- |
+| Sync HotStuff | 1.03 s, 17 KB | 1.04 s, 35 KB | 1.09 s, 86 KB |
+| Apollo | 7 ms, 22 KB | 32 ms, 56 KB | 129 ms, 163 KB |
+| polaris over Dolev-Strong | 5.5 s, 23 KB | 7.5 s, 121 KB | 11.5 s, 795 KB |
+| polaris over WXSD, aggregated | 8.5 s, 76 KB | 8.6 s, 287 KB | 8.7 s, 1.11 MB |
+| polaris over Dolev-Strong, t = 3n/4 | 8.5 s, 22 KB | 11.5 s, 121 KB | 17.5 s, 624 KB |
+| polaris over WXSD, aggregated, t = 3n/4 | 14.5 s, 76 KB | 14.6 s, 287 KB | 14.7 s, 1.11 MB |
+
+The comparison is not like for like: those protocols tolerate fewer than
+n/2 faults, agree on a leader's block of client transactions rather than on
+every process's own input, and Apollo is responsive, so on loopback its
+latency is the network's rather than Delta's. Sync HotStuff, which waits
+on Delta as polaris does, commits in about 2 Delta; polaris needs 11 to 23
+rounds of Delta at these sizes, and at n = 32 sends 9 (over Dolev-Strong) to
+13 (over WXSD) times its bytes. Configured for a dishonest majority, t = 3n/4, which those
+protocols cannot be, polaris needs 17 to 35 rounds of Delta over
+Dolev-Strong and 29 over WXSD, for about the same bytes.
+
 ## Conventions
 
 - Protocol logic never does I/O: it lives in `polaris-proto` as round
