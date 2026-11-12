@@ -1,0 +1,67 @@
+# Network runs across several machines. Replace the [hosts] list with your
+# ssh targets, then follow docs/multihost.md:
+#
+#   python3 eval/check_hosts.py eval/hosts.toml
+#   python3 eval/run.py eval/hosts.toml --only smoke-echo --out eval/results/hosts
+#   python3 eval/run.py eval/hosts.toml --out eval/results/hosts
+#   python3 eval/aggregate.py eval/results/hosts
+#
+# Node i runs on the i-th host round robin, so with 8 hosts and n = 64 each
+# host runs 8 nodes. Every node is honest: the network runs measure time,
+# CPU, memory and late messages; the simulator already covers attacks.
+
+[defaults]
+# One round must hold the slowest one-way delay plus the work of a round.
+# 500 ms is safe within a continent; across continents measure first (the
+# smoke runs report late messages) and raise it if any arrive late.
+round_ms = 500
+reps = 3
+start_in_s = 30
+base_port = 7000
+max_rounds = 400
+
+[hosts]
+list = ["user@host1", "user@host2", "user@host3", "user@host4"]
+workdir = "polaris-eval"
+binary = "polaris-eval/polaris"
+
+# Checks ports and clocks: a few nodes on every host, a trivial protocol.
+[[experiment]]
+name = "smoke-echo"
+protocol = "echo"
+reps = 1
+sizes = [[8, 2]]
+
+[[experiment]]
+name = "smoke-ic"
+protocol = "ic"
+broadcast = "dolev-strong"
+reps = 1
+sizes = [[8, 4]]
+
+# The constructions of the paper, t = n/2 and t = 3n/4.
+[[experiment]]
+name = "m-ic-ds"
+protocol = "ic"
+broadcast = "dolev-strong"
+sizes = [[16, 8], [32, 16], [64, 32], [16, 12], [32, 24], [64, 48]]
+
+[[experiment]]
+name = "m-ic-wxsd-agg"
+protocol = "ic"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[16, 8], [32, 16], [64, 32], [16, 12], [32, 24], [64, 48]]
+
+[[experiment]]
+name = "m-par-ds"
+protocol = "parallel"
+broadcast = "dolev-strong"
+sizes = [[16, 8], [32, 16], [64, 32], [16, 12], [32, 24], [64, 48]]
+
+[[experiment]]
+name = "m-par-wxsd-agg"
+protocol = "parallel"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[16, 8], [32, 16], [64, 32], [16, 12], [32, 24], [64, 48]]
