@@ -142,6 +142,17 @@ impl LearnOrExpose {
         &self.acc
     }
 
+    /// Resolves parties from disclosures the compiler has already verified,
+    /// learned outside this instance after it started.
+    pub fn absorb_disclosures(&mut self, ds: &[Disclosure]) {
+        for d in ds {
+            if self.unresolved.remove(d.sender) {
+                self.entries[usize::from(d.sender)] = Some(d.clone());
+                self.stats.learned += 1;
+            }
+        }
+    }
+
     /// Adds accusations learned outside this instance after it started. The
     /// compiler gossips each one when it absorbs it, so every honest node
     /// absorbs it within one round.

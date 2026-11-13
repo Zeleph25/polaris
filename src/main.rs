@@ -95,6 +95,9 @@ enum Cmd {
         /// `ic`: carry accusations from finished instances into the next ones.
         #[arg(long)]
         share_accusations: bool,
+        /// `ic`: send each disclosure once per run instead of once per view.
+        #[arg(long)]
+        share_disclosures: bool,
     },
     /// Run one node from a config file.
     Node {
@@ -130,6 +133,8 @@ enum Cmd {
         #[arg(long)]
         share_accusations: bool,
         #[arg(long)]
+        share_disclosures: bool,
+        #[arg(long)]
         out: PathBuf,
     },
     /// Run an n-node cluster in this process over TCP and check its
@@ -157,6 +162,8 @@ enum Cmd {
         aggregate_votes: bool,
         #[arg(long)]
         share_accusations: bool,
+        #[arg(long)]
+        share_disclosures: bool,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -256,6 +263,7 @@ async fn main() -> anyhow::Result<()> {
             input_bytes,
             aggregate_votes,
             share_accusations,
+            share_disclosures,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -287,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
                     broadcast,
                     aggregate_votes,
                     share_accusations,
+                    share_disclosures,
                     input_bytes,
                     view_spacing,
                     max_views: None,
@@ -341,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
                 cfg.view_spacing,
                 cfg.max_views,
                 cfg.share_accusations,
+                cfg.share_disclosures,
             );
             let wxsd = wxsd_config(cfg.aggregate_votes);
             with_machines!(
@@ -369,6 +379,7 @@ async fn main() -> anyhow::Result<()> {
             input_bytes,
             aggregate_votes,
             share_accusations,
+            share_disclosures,
             out,
         } => {
             let spec = SimSpec {
@@ -380,7 +391,13 @@ async fn main() -> anyhow::Result<()> {
                 seed,
                 run_id: 1,
             };
-            let config = ic_config(Params::new(n, t)?, view_spacing, None, share_accusations);
+            let config = ic_config(
+                Params::new(n, t)?,
+                view_spacing,
+                None,
+                share_accusations,
+                share_disclosures,
+            );
             let wxsd = wxsd_config(aggregate_votes);
             with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 sim(&spec, &m, &out)?;
@@ -398,6 +415,7 @@ async fn main() -> anyhow::Result<()> {
             input_bytes,
             aggregate_votes,
             share_accusations,
+            share_disclosures,
             out,
         } => {
             let spec = LocalSpec {
@@ -408,7 +426,13 @@ async fn main() -> anyhow::Result<()> {
                 seed,
                 run_id: 1,
             };
-            let config = ic_config(Params::new(n, t)?, view_spacing, None, share_accusations);
+            let config = ic_config(
+                Params::new(n, t)?,
+                view_spacing,
+                None,
+                share_accusations,
+                share_disclosures,
+            );
             let wxsd = wxsd_config(aggregate_votes);
             with_machines!(protocol, broadcast, config, wxsd, input_bytes, |m| {
                 local(&spec, &m, out.as_deref()).await?;
@@ -444,10 +468,14 @@ fn ic_config(
     view_spacing: Option<u32>,
     max_views: Option<u32>,
     share_accusations: bool,
+    share_disclosures: bool,
 ) -> CompilerConfig {
     let mut config = CompilerConfig::for_params(params);
     if share_accusations {
         config = config.sharing_accusations();
+    }
+    if share_disclosures {
+        config = config.sharing_disclosures();
     }
     if let Some(c) = view_spacing {
         config = config.with_view_spacing(c);

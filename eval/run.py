@@ -53,6 +53,8 @@ def run_sim(binary, exp, n, t, rep, d, defaults):
         cmd += ["--aggregate-votes"]
     if exp.get("share_accusations"):
         cmd += ["--share-accusations"]
+    if exp.get("share_disclosures"):
+        cmd += ["--share-disclosures"]
     started = time.time()
     with open(d / "sim.log", "w") as log:
         code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
@@ -85,6 +87,8 @@ def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools):
         gen += ["--aggregate-votes"]
     if exp.get("share_accusations"):
         gen += ["--share-accusations"]
+    if exp.get("share_disclosures"):
+        gen += ["--share-disclosures"]
     if hosts:
         gen += ["--hosts", ",".join(host_name(h) for h in hosts["list"])]
     subprocess.run(gen, check=True, capture_output=True)

@@ -193,6 +193,10 @@ accused in LearnOrExpose is distrusted from the start of its own broadcast,
 which then runs until an honest epoch leader instead of delivering the
 leader's vector (see the README).
 
+With `share_disclosures`, disclosures travel at the run level instead of
+inside each LearnOrExpose instance; decision 12 below explains why and why
+it is safe.
+
 Sub-machines get their own context: they record signature work into it and
 also call `decided`, which must not count as the compiler's decision, so
 the compiler absorbs their counters into its own metrics every round.
@@ -292,6 +296,59 @@ that record it.
     drivers, and a node's own `Dest::All` messages are in its own inbox.
     Protocol logic must not depend on arrival order, which the
     order-independent transcript fingerprints enforce.
+
+12. **Each disclosure crosses the network once per run, not once per view**
+    (`share_disclosures`, off by default so the printed protocol stays
+    measurable).
+
+    *The cost it removes.* In the paper, every LearnOrExpose instance opens
+    by sending every disclosure the node holds to everyone (lines 3 to 5).
+    The disclosures are signed in round 0 and never change, so with `R`
+    views in flight, the same `n` inputs cross the network up to `R` times,
+    `n^2 L` bytes per node and view for inputs of `L` bytes. That is most of
+    what pipelined views cost over sequential ones (see the input size
+    table in the README).
+
+    *The change.* The compiler holds every disclosure the node knows
+    (`known`) and the set of senders whose disclosure the node has already
+    sent to everyone (`sent`; its own from round 0). A disclosure received
+    in any message is verified once at the run level, added to `known`,
+    handed to every running LearnOrExpose instance in the same round
+    (`absorb_disclosures`, before the instances run their round), and
+    forwarded to everyone if it is not in `sent`. An instance's opening
+    messages and forwards go through the compiler, which drops the
+    disclosures already in `sent`. Instances no longer receive disclosures
+    themselves.
+
+    *Why the proofs still hold.* LearnOrExpose needs one thing from its
+    disclosure messages: if an honest node holds a disclosure, every honest
+    node holds it within one round, in the same instance. Without the
+    change, an honest node `p` sends it in the instance's opening round,
+    and every honest `q` has it at the end of that round. With the change,
+    `p` skips it only if it already sent it to everyone in an earlier
+    round. That message reached every honest `q` one round later, and `q`
+    put it into `known` and into every instance running then. An instance
+    started after that starts from `known`, so `q` holds it from the
+    instance's first round, which is no later than before. One case needs
+    care: `q` must hand a received disclosure to all its instances before
+    any of them runs the round. Otherwise an instance that ran first would
+    see the party unresolved for one more round and could accuse an honest
+    neighbor. So the compiler takes the disclosures out of every inbox
+    first. Nothing else changes: the instances' inputs stay
+    `VerifyVec_in`-valid, and accusations, proofs, broadcasts and the
+    ordered scan are untouched.
+
+    *What it measures.* The same seed decides the same vector in the same
+    view and round with and without it (`shared_disclosures_decide_the_same`,
+    and every randomized sweep runs both). At n = 16, t = 8, without
+    Byzantine nodes and with 10 KB inputs, a node sends 7.9 MB instead of
+    13.4 MB over Dolev-Strong and 11.2 MB instead of 19.3 MB over WXSD with
+    aggregated evidence, about 41 % less. Sequential views still send less
+    (5.4 and 5.7 MB). What remains is the leader's vector in every view
+    whose broadcast starts before the decision, and only a different
+    broadcast payload, such as digests of known entries, would remove it.
+    Under the omission adversary at n = 32, t = 16, with short inputs, the
+    saving is 9 to 21 % for the same decision round.
 
 ## Testing
 

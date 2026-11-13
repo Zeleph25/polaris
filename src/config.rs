@@ -72,6 +72,9 @@ pub struct NodeConfig {
     /// `ic`: carry accusations from finished instances into the next ones.
     #[serde(default)]
     pub share_accusations: bool,
+    /// `ic`: send each disclosure once per run instead of once per view.
+    #[serde(default)]
+    pub share_disclosures: bool,
     /// Rounds between view starts for `ic`; the default is R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_spacing: Option<u32>,

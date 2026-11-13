@@ -76,6 +76,13 @@ fn dolev_strong_adversary() {
         check(&ic, AdversaryKind::DsChaos, n, t, 0..4, |o| {
             o.values.clone()
         });
+        let shared = IcMachines {
+            config: config(n, t).sharing_disclosures(),
+            input_bytes: 0,
+        };
+        check(&shared, AdversaryKind::DsChaos, n, t, 0..3, |o| {
+            o.values.clone()
+        });
         let par = ParallelDsMachines { input_bytes: 0 };
         check(&par, AdversaryKind::DsChaos, n, t, 0..4, |o| {
             o.values.clone()
@@ -96,7 +103,10 @@ fn wxsd_adversary() {
                 o.values.clone()
             });
             let seq = IcWxsdMachines {
-                config: config(n, t).sequential().sharing_accusations(),
+                config: config(n, t)
+                    .sequential()
+                    .sharing_accusations()
+                    .sharing_disclosures(),
                 wxsd,
                 input_bytes: 0,
             };

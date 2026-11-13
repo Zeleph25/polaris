@@ -285,11 +285,14 @@ fn random_omission_adversaries() {
             let byzantine: Vec<NodeId> = ids[..t].to_vec();
             let r = kr.params.loe_rounds();
             // Pipelined every R rounds, denser, or sequential; accusations
-            // shared on every other seed.
+            // shared on every other seed, disclosures on every other pair.
             let c = [r, (r / 2).max(1), 0][(seed % 3) as usize];
             let mut config = CompilerConfig::for_params(kr.params).with_view_spacing(c);
             if seed % 2 == 1 {
                 config = config.sharing_accusations();
+            }
+            if seed % 4 >= 2 {
+                config = config.sharing_disclosures();
             }
             let nodes = keys
                 .iter()
@@ -418,6 +421,48 @@ fn shared_accusations_spare_later_views() {
     assert_eq!(views_shared, 3);
     assert_eq!(plain, 3 * 2, "two silent nodes accused once per view");
     assert_eq!(shared, 2, "accused in the first view only");
+}
+
+/// Shared disclosures change what crosses the wire, not what is decided:
+/// the same seed decides the same vector in the same view and round, with
+/// fewer bytes once more than one view runs.
+#[test]
+fn shared_disclosures_decide_the_same() {
+    for (n, t, seed) in [(6, 2, 1), (8, 4, 2), (8, 6, 5)] {
+        let (kr, keys) = setup(n, t, seed);
+        let l1 = leader(&kr, 1);
+        let run = |config: CompilerConfig| {
+            let nodes = keys
+                .iter()
+                .map(|k| {
+                    if k.id == l1 {
+                        Node::Byzantine(Box::new(Silent))
+                    } else {
+                        Node::Honest(ic(&kr, k, config))
+                    }
+                })
+                .collect();
+            let mut sim = Simulator::new(kr.params, RUN, nodes).unwrap();
+            sim.run_until_decided(2_000).unwrap();
+            let out = check(&sim, &[l1], n);
+            let honest: Vec<NodeId> = (0..n as NodeId).filter(|&i| i != l1).collect();
+            let rounds: Vec<_> = honest
+                .iter()
+                .map(|&i| sim.metrics(i).decision_round().unwrap())
+                .collect();
+            let bytes: u64 = honest
+                .iter()
+                .map(|&i| sim.metrics(i).total().bytes_sent)
+                .sum();
+            (out, rounds, bytes)
+        };
+        let base = CompilerConfig::for_params(kr.params);
+        let (out, rounds, bytes) = run(base);
+        let (out_s, rounds_s, bytes_s) = run(base.sharing_disclosures());
+        assert_eq!(out_s, out, "n={n} t={t}");
+        assert_eq!(rounds_s, rounds, "n={n} t={t}");
+        assert!(bytes_s < bytes, "n={n} t={t}: {bytes_s} >= {bytes}");
+    }
 }
 
 #[test]
@@ -577,6 +622,9 @@ mod over_wxsd {
                 if seed % 2 == 1 {
                     config = config.sharing_accusations();
                 }
+                if seed % 4 >= 2 {
+                    config = config.sharing_disclosures();
+                }
                 omission_run(n, t, seed, config);
             }
         }
@@ -592,6 +640,9 @@ mod over_wxsd {
                     CompilerConfig::for_params(Params::new(n, t).unwrap()).sequential();
                 if seed % 2 == 1 {
                     config = config.sharing_accusations();
+                }
+                if seed % 4 >= 2 {
+                    config = config.sharing_disclosures();
                 }
                 omission_run(n, t, seed, config);
             }

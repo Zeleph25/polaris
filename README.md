@@ -121,8 +121,9 @@ sequential, the next starting only when the previous broadcast delivered
 without a decision), `--input-bytes` the size of every node's input
 (default: the short label `input-of-<i>`), `--aggregate-votes` makes
 WXSD send commit evidence as one BLS multi-signature instead of the signed
-votes, and `--share-accusations` carries the accusations of finished
-instances into the next ones. `genconfig` writes
+votes, `--share-accusations` carries the accusations of finished
+instances into the next ones, and `--share-disclosures` sends each
+disclosure once per run instead of once per view. `genconfig` writes
 `keyring.toml` (every node's public keys and proofs of possession),
 `node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
 addresses, the round length, the shared wall-clock start of round 0, the
@@ -181,10 +182,10 @@ adversarial runs, which the simulator measures.
 Input size changes the picture. At 10 KB inputs and n = 16, bytes sent per
 node, all honest:
 
-| | pipelined views (c = R) | sequential views (c = 0) | n parallel |
-| --- | --- | --- | --- |
-| over Dolev-Strong | 13.4 MB | 5.4 MB | 2.7 MB |
-| over WXSD, aggregated evidence | 19.3 MB | 5.7 MB | 4.2 MB |
+| | pipelined views (c = R) | pipelined, shared disclosures | sequential views (c = 0) | n parallel |
+| --- | --- | --- | --- | --- |
+| over Dolev-Strong | 13.4 MB | 7.9 MB | 5.4 MB | 2.7 MB |
+| over WXSD, aggregated evidence | 19.3 MB | 11.2 MB | 5.7 MB | 4.2 MB |
 
 With pipelining, views 2 and 3 start while view 1 is about to succeed, and
 every view's LearnOrExpose sends all `n` disclosures it holds to everyone
@@ -197,6 +198,14 @@ delivering to a random half of the nodes; 10 seeds) at n = 32, t = 16,
 sequential views over Dolev-Strong decide in 24.2 +- 7.0 rounds against
 22.5 +- 1.6 pipelined, for a quarter of the bytes (0.40 MB against
 1.69 MB): a whole view of latency per failed view.
+
+Shared disclosures (`--share-disclosures`) keep pipelining and its rounds
+but send each disclosure once per run instead of once per view: about 41 %
+fewer bytes at 10 KB inputs, the same decision in the same round. What
+pipelining still costs over sequential views is the leader's vector of
+every view whose broadcast starts before the decision. The design notes
+(decision 12) give the argument that this keeps LearnOrExpose's
+invariant.
 
 Aggregated vote evidence (`--aggregate-votes`: one BLS multi-signature per
 commit instead of the signed votes) takes WXSD's Commit phase, the heaviest

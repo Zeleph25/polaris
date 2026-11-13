@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use polaris_core::{Ctx, NodeId, Outgoing, Params, Round, RoundMachine, View, wire};
+use polaris_core::{Ctx, NodeId, NodeSet, Outgoing, Params, Round, RoundMachine, View, wire};
 use polaris_crypto::keyring::{Keyring, NodeKeys};
 use polaris_crypto::{ed25519, hex};
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,17 @@ pub struct CompilerConfig {
     /// level when it is learned, which keeps every honest node's set within
     /// one round of every other's, the invariant seeded instances rely on.
     pub share_accusations: bool,
+    /// Send each disclosure at most once per run instead of once per view.
+    /// In the paper, every LearnOrExpose instance opens by sending every
+    /// disclosure the node holds to everyone, so with `R` views in flight
+    /// the inputs cross the network `R` times. Here disclosures travel at
+    /// the run level: a node forwards each one the first time it learns
+    /// it, every received disclosure goes into every running instance in
+    /// the round it arrives, and an instance opens by sending only the ones
+    /// the node has not sent before. An honest node's instance therefore
+    /// holds every disclosure no later than it would have from the opening
+    /// messages it no longer receives.
+    pub share_disclosures: bool,
 }
 
 impl CompilerConfig {
@@ -69,7 +80,13 @@ impl CompilerConfig {
             view_spacing: params.loe_rounds(),
             max_views: View::MAX,
             share_accusations: false,
+            share_disclosures: false,
         }
+    }
+
+    pub fn sharing_disclosures(mut self) -> Self {
+        self.share_disclosures = true;
+        self
     }
 
     pub fn sharing_accusations(mut self) -> Self {
@@ -163,6 +180,9 @@ pub struct Compiler<B: Broadcast> {
     input: Option<Vec<u8>>,
     /// Every disclosure this node holds; `VerifyVec_in` holds at all times.
     known: Entries,
+    /// The senders whose disclosure this node has sent to everyone, when
+    /// disclosures are shared.
+    sent: NodeSet,
     /// Accusations of finished instances, when they are shared.
     shared: AccusationSet,
     views: BTreeMap<View, ViewState<B>>,
@@ -233,6 +253,7 @@ impl<B: Broadcast> Compiler<B> {
             termination_skew,
             input: Some(input),
             known: vec![None; n],
+            sent: NodeSet::empty(n),
             shared: AccusationSet::new(n),
             views: BTreeMap::new(),
             results: BTreeMap::new(),
@@ -277,7 +298,7 @@ impl<B: Broadcast> Compiler<B> {
     /// Keeps the first valid disclosure per sender. Everything is verified
     /// before anything is kept, so a forgery that arrives first cannot
     /// shadow the real one.
-    fn take_disclosures(&mut self, ctx: &mut Ctx, discs: Vec<Disclosure>) {
+    fn take_disclosures(&mut self, ctx: &mut Ctx, discs: Vec<Disclosure>) -> Vec<Disclosure> {
         let candidates: Vec<Disclosure> = discs
             .into_iter()
             .filter(|d| {
@@ -286,7 +307,7 @@ impl<B: Broadcast> Compiler<B> {
             })
             .collect();
         if candidates.is_empty() {
-            return;
+            return vec![];
         }
         let items: Vec<ed25519::Item<'_>> = candidates
             .iter()
@@ -295,10 +316,36 @@ impl<B: Broadcast> Compiler<B> {
         let started = Instant::now();
         let bad = ed25519::verify_batch(&items).err().unwrap_or_default();
         ctx.metrics.verified(items.len() as u64, started.elapsed());
+        let mut learned = Vec::new();
         for (i, d) in candidates.into_iter().enumerate() {
             let slot = &mut self.known[usize::from(d.sender)];
             if !bad.contains(&i) && slot.is_none() {
-                *slot = Some(d);
+                *slot = Some(d.clone());
+                learned.push(d);
+            }
+        }
+        learned
+    }
+
+    /// With shared disclosures: hands newly learned disclosures to every
+    /// running LearnOrExpose instance and forwards the ones this node has
+    /// not sent yet, once.
+    fn spread_disclosures(
+        &mut self,
+        learned: Vec<Disclosure>,
+        out: &mut Vec<Outgoing<IcMsg<B::Msg>>>,
+    ) {
+        if learned.is_empty() {
+            return;
+        }
+        for state in self.views.values_mut() {
+            if let Phase::Loe(loe) = &mut state.phase {
+                loe.absorb_disclosures(&learned);
+            }
+        }
+        for d in learned {
+            if self.sent.insert(d.sender) {
+                out.push(Outgoing::all(IcMsg::Disclose(d)));
             }
         }
     }
@@ -345,7 +392,12 @@ impl<B: Broadcast> Compiler<B> {
                 self.known.clone(),
             )
         };
-        let out = wrap_loe(view, loe.start(&mut self.sub));
+        let out = route_loe(
+            view,
+            loe.start(&mut self.sub),
+            self.config.share_disclosures,
+            &mut self.sent,
+        );
         self.views.insert(
             view,
             ViewState {
@@ -385,11 +437,25 @@ impl<B: Broadcast> Compiler<B> {
     }
 }
 
-fn wrap_loe<M>(view: View, out: Vec<Outgoing<LoeMsg>>) -> Vec<Outgoing<IcMsg<M>>> {
+/// Wraps an instance's messages for the wire. With shared disclosures, a
+/// disclosure leaves at the run level, and only if this node has not sent
+/// that sender's disclosure before.
+fn route_loe<M>(
+    view: View,
+    out: Vec<Outgoing<LoeMsg>>,
+    share_disclosures: bool,
+    sent: &mut NodeSet,
+) -> Vec<Outgoing<IcMsg<M>>> {
     out.into_iter()
-        .map(|o| Outgoing {
-            to: o.to,
-            msg: IcMsg::Loe { view, msg: o.msg },
+        .filter_map(|o| match o.msg {
+            LoeMsg::Disclose(d) if share_disclosures => sent.insert(d.sender).then(|| Outgoing {
+                to: o.to,
+                msg: IcMsg::Disclose(d),
+            }),
+            msg => Some(Outgoing {
+                to: o.to,
+                msg: IcMsg::Loe { view, msg },
+            }),
         })
         .collect()
 }
@@ -411,6 +477,7 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
         let input = self.input.take().expect("start is called once");
         let d = Disclosure::sign(&self.keys, self.keyring.run_id, input);
         self.known[usize::from(self.keys.id)] = Some(d.clone());
+        self.sent.insert(self.keys.id);
         vec![Outgoing::all(IcMsg::Disclose(d))]
     }
 
@@ -433,13 +500,20 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
             match msg {
                 IcMsg::Disclose(d) => discs.push(d),
                 IcMsg::Accuse(a) => accs.push(a),
+                IcMsg::Loe {
+                    msg: LoeMsg::Disclose(d),
+                    ..
+                } if self.config.share_disclosures => discs.push(d),
                 IcMsg::Loe { view, msg } => loe_in.entry(view).or_default().push((from, msg)),
                 IcMsg::Bb { view, msg } => bb_in.entry(view).or_default().push((from, msg)),
             }
         }
-        self.take_disclosures(ctx, discs);
+        let learned = self.take_disclosures(ctx, discs);
 
         let mut out = Vec::new();
+        if self.config.share_disclosures {
+            self.spread_disclosures(learned, &mut out);
+        }
         if self.config.share_accusations && !accs.is_empty() {
             let started = Instant::now();
             let ok = accusations::verify_many(&self.keyring, &accs);
@@ -459,7 +533,12 @@ impl<B: Broadcast> RoundMachine for Compiler<B> {
             match &mut state.phase {
                 Phase::Loe(loe) => {
                     let inbox = loe_in.remove(&view).unwrap_or_default();
-                    out.extend(wrap_loe(view, loe.end_round(&mut self.sub, round, inbox)));
+                    out.extend(route_loe(
+                        view,
+                        loe.end_round(&mut self.sub, round, inbox),
+                        self.config.share_disclosures,
+                        &mut self.sent,
+                    ));
                     if round + 1 == state.loe_start + loe_rounds {
                         let entries = loe.entries().clone();
                         let submit = (state.leader == self.keys.id)
