@@ -6,3 +6,4 @@
 /eval/results/
 /.idea/
 __pycache__/
+/eval/hosts.hetzner.toml

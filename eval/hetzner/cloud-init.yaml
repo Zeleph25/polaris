@@ -1,0 +1,29 @@
+#cloud-config
+# Every polaris server: clock sync, rsync, and polaris built from GitHub at
+# /root/polaris/target/release/polaris. /root/polaris-ready appears when the
+# build is done (or /root/polaris-failed if it is not).
+package_update: true
+packages:
+  - chrony
+  - rsync
+  - git
+  - build-essential
+  - python3
+runcmd:
+  - - bash
+    - -c
+    - |
+      export HOME=/root
+      # Every step logs to build.log, and a failure at any of them, not
+      # only the build, leaves polaris-failed for up.sh to find.
+      if {
+        curl -sSf https://sh.rustup.rs -o /root/rustup.sh &&
+        sh /root/rustup.sh -y --profile minimal &&
+        git clone https://github.com/Zeleph25/polaris.git /root/polaris &&
+        cd /root/polaris &&
+        /root/.cargo/bin/cargo build --release
+      } > /root/build.log 2>&1; then
+        touch /root/polaris-ready
+      else
+        touch /root/polaris-failed
+      fi

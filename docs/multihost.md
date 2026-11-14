@@ -106,6 +106,65 @@ runs of the file take about an hour and a half. `--only m-ic-ds` runs one
 experiment. Send back the `eval/results/hosts` directory, or at least the
 `summary.csv` and `summary.md` that `aggregate.py` writes there.
 
+## On Hetzner Cloud
+
+`eval/hetzner/` creates the servers, builds polaris on each one from
+GitHub (so the repository must be public and `main` pushed), writes the
+experiment file and deletes the servers afterwards. Hetzner Cloud opens
+every port by default and Ubuntu keeps the clocks synchronized with
+chrony, so there is nothing else to set up.
+
+Once, on your laptop:
+
+```
+brew install hcloud                       # or the release binary from GitHub
+hcloud context create polaris             # paste an API token: Hetzner Console,
+                                          # your project, Security, API tokens,
+                                          # with Read & Write
+```
+
+Then, from the repository:
+
+```
+eval/hetzner/up.sh single      # one CCX63: 48 dedicated cores, about EUR 1.2/hour
+eval/hetzner/up.sh regions     # 8 CCX33 in Nuremberg, Ashburn, Hillsboro and
+                               # Singapore: about EUR 1.5/hour for all 8
+```
+
+`up.sh` takes about five minutes, mostly the builds, and ends by
+printing the commands to run on the first server, which is the
+controller. Hetzner reuses addresses, so `up.sh` forgets any host key an
+earlier server left for them (and `down.sh` those of the servers it
+deletes); if ssh still refuses a server, or a build gives no sign of
+life for 20 minutes, `up.sh` stops with ssh's message instead of
+waiting. Results go to `eval/results/hetzner-<type>`, after the server
+type. Run the printed commands inside `tmux`, or start the long one with
+`nohup ... &`, so that the runs go on if your laptop sleeps or the
+connection drops. `up.sh` also prints how to copy the results back as
+one archive, without the per-message transcripts, which are large (1.6
+GB for the matrix) and used by no table.
+When the results are copied back:
+
+```
+eval/hetzner/down.sh           # deletes every polaris server
+```
+
+Servers bill by the hour until they are deleted, even idle ones; the
+Hetzner Console lists anything left.
+
+A new account may create only a few dedicated cores ("dedicated core limit
+exceeded"). The Limits tab of the project's overview in the Hetzner Console
+shows the limits, and its Request change button asks for more (handled by
+hand, during business hours). Until then, `single-shared` (one 16-core
+cpx62) and `regions-shared` (8-core cpx41 or cpx42, depending on the
+location) use shared cores: rounds, bytes and signatures are the same,
+timings are noisier.
+
+On the single server, the 64 nodes of n = 64 share 48 cores. polaris
+needs little of them, but n parallel WXSD at n = 64 may not finish its
+rounds in 500 ms; if its runs report late messages, rerun that experiment
+with `round_ms = 1000` or 2000 in its table.
+
 ## Latency
 
 Hosts in one data center are a LAN, with well under a millisecond between
