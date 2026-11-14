@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use polaris_core::{Ctx, Dest, Metrics, NodeId, Params, Round, RoundMachine, wire};
 use polaris_sim::{Entry, Transcript};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::net::{Received, Transport};
 
@@ -108,42 +109,43 @@ where
     let mut round: Round = 0;
     loop {
         let end = start + schedule.round * (round + 1);
-        let mut inbox: Vec<Received> = future.remove(&round).unwrap_or_default();
+        let mut inbox: Inbox<M::Msg> = Inbox::default();
+        for msg in future.remove(&round).unwrap_or_default() {
+            inbox.accept(msg, me);
+        }
         loop {
             let remaining = end.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 break;
             }
             match tokio::time::timeout(remaining, transport.recv()).await {
-                Ok(Some(msg)) => classify(msg, round, &mut inbox, &mut future, &mut ctx.metrics),
+                Ok(Some(msg)) => {
+                    if let Some(msg) = classify(msg, round, &mut future, &mut ctx.metrics) {
+                        inbox.accept(msg, me);
+                    }
+                }
                 Ok(None) => break,
                 Err(_) => break,
             }
         }
         // Whatever is already queued at the deadline counts as arrived in time.
         while let Some(msg) = transport.try_recv() {
-            classify(msg, round, &mut inbox, &mut future, &mut ctx.metrics);
-        }
-
-        inbox.sort_by_key(|m| m.from);
-        let mut decoded: Vec<(NodeId, M::Msg)> = Vec::with_capacity(inbox.len());
-        let mut bytes = 0u64;
-        for m in &inbox {
-            match wire::decode::<M::Msg>(&m.payload) {
-                Ok(msg) => {
-                    transcript.record(Entry::new(m.round, m.from, me, &m.payload));
-                    bytes += m.payload.len() as u64;
-                    decoded.push((m.from, msg));
-                }
-                Err(e) => tracing::warn!(from = m.from, error = %e, "undecodable message dropped"),
+            if let Some(msg) = classify(msg, round, &mut future, &mut ctx.metrics) {
+                inbox.accept(msg, me);
             }
         }
-        ctx.metrics.received(decoded.len() as u64, bytes);
+
+        let Inbox { msgs, entries } = inbox.sorted_by_sender(schedule.params.n);
+        let bytes = entries.iter().map(|e| u64::from(e.bytes)).sum();
+        for e in entries {
+            transcript.record(e);
+        }
+        ctx.metrics.received(msgs.len() as u64, bytes);
 
         let out = if machine.is_halted() {
             vec![]
         } else {
-            machine.end_round(&mut ctx, round, decoded)
+            machine.end_round(&mut ctx, round, msgs)
         };
         ctx.metrics.end_round(round);
         send_all(&transport, &mut ctx, round + 1, out);
@@ -174,22 +176,87 @@ where
     }
 }
 
+/// The round being collected. Messages are decoded as they arrive, so that
+/// their wire bytes are freed at once instead of being held next to the
+/// decoded inbox, which is the largest thing a node keeps.
+struct Inbox<Msg> {
+    msgs: Vec<(NodeId, Msg)>,
+    entries: Vec<Entry>,
+}
+
+impl<Msg> Default for Inbox<Msg> {
+    fn default() -> Self {
+        Self {
+            msgs: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<Msg: DeserializeOwned> Inbox<Msg> {
+    fn accept(&mut self, m: Received, me: NodeId) {
+        match wire::decode::<Msg>(&m.payload) {
+            Ok(msg) => {
+                self.entries
+                    .push(Entry::new(m.round, m.from, me, &m.payload));
+                self.msgs.push((m.from, msg));
+            }
+            Err(e) => tracing::warn!(from = m.from, error = %e, "undecodable message dropped"),
+        }
+    }
+}
+
+impl<Msg> Inbox<Msg> {
+    /// Orders the messages by sender, each sender's in arrival order, and
+    /// the transcript entries with them. Done in place: a stable sort of the
+    /// messages would allocate a buffer of up to half the inbox.
+    fn sorted_by_sender(mut self, n: usize) -> Self {
+        let mut start = vec![0usize; n + 1];
+        for (from, _) in &self.msgs {
+            start[usize::from(*from) + 1] += 1;
+        }
+        for i in 0..n {
+            start[i + 1] += start[i];
+        }
+        // dest[k]: where the message now at k belongs.
+        let mut dest: Vec<usize> = self
+            .msgs
+            .iter()
+            .map(|(from, _)| {
+                let slot = &mut start[usize::from(*from)];
+                *slot += 1;
+                *slot - 1
+            })
+            .collect();
+        for k in 0..dest.len() {
+            while dest[k] != k {
+                let d = dest[k];
+                self.msgs.swap(k, d);
+                self.entries.swap(k, d);
+                dest.swap(k, d);
+            }
+        }
+        self
+    }
+}
+
+/// Holds a message labeled with a later round until then; returns it for
+/// the current round otherwise, counting it as late if labeled earlier.
 fn classify(
     msg: Received,
     round: Round,
-    inbox: &mut Vec<Received>,
     future: &mut BTreeMap<Round, Vec<Received>>,
     metrics: &mut Metrics,
-) {
+) -> Option<Received> {
     if msg.round > round {
         future.entry(msg.round).or_default().push(msg);
-    } else {
-        if msg.round < round {
-            metrics.late(1);
-            tracing::warn!(from = msg.from, labeled = msg.round, round, "late message");
-        }
-        inbox.push(msg);
+        return None;
     }
+    if msg.round < round {
+        metrics.late(1);
+        tracing::warn!(from = msg.from, labeled = msg.round, round, "late message");
+    }
+    Some(msg)
 }
 
 fn send_all<M: Serialize>(
@@ -199,24 +266,29 @@ fn send_all<M: Serialize>(
     out: Vec<polaris_core::Outgoing<M>>,
 ) {
     let n = ctx.params.n;
-    let mut batches: Vec<Vec<Vec<u8>>> = (0..n).map(|_| Vec::new()).collect();
+    let mut common: Vec<Vec<u8>> = Vec::new();
+    let mut extra: Vec<Vec<Vec<u8>>> = Vec::new();
     let (mut msgs, mut bytes) = (0u64, 0u64);
     for o in out {
         let payload = wire::encode(&o.msg).expect("protocol messages serialize");
-        let recipients: Vec<usize> = match o.to {
-            Dest::All => (0..n).collect(),
-            Dest::One(j) => vec![usize::from(j)],
-        };
-        msgs += recipients.len() as u64;
-        bytes += payload.len() as u64 * recipients.len() as u64;
-        for to in recipients {
-            batches[to].push(payload.clone());
+        match o.to {
+            Dest::All => {
+                msgs += n as u64;
+                bytes += payload.len() as u64 * n as u64;
+                common.push(payload);
+            }
+            Dest::One(j) => {
+                extra.resize_with(n, Vec::new);
+                if let Some(e) = extra.get_mut(usize::from(j)) {
+                    msgs += 1;
+                    bytes += payload.len() as u64;
+                    e.push(payload);
+                }
+            }
         }
     }
     ctx.metrics.sent(msgs, bytes);
-    for (to, payloads) in batches.into_iter().enumerate() {
-        transport.send_batch(NodeId::try_from(to).expect("fits"), round, payloads);
-    }
+    transport.send_round(round, common, extra);
 }
 
 impl<O: Serialize> Outcome<O> {
@@ -230,10 +302,11 @@ impl<O: Serialize> Outcome<O> {
             metrics.push('\n');
         }
         std::fs::write(dir.join(format!("node-{}.metrics.jsonl", self.me)), metrics)?;
-        std::fs::write(
+        let mut transcript = std::io::BufWriter::new(std::fs::File::create(
             dir.join(format!("node-{}.transcript.jsonl", self.me)),
-            self.transcript.to_json_lines(),
-        )?;
+        )?);
+        self.transcript.write_json_lines(&mut transcript)?;
+        std::io::Write::flush(&mut transcript)?;
         std::fs::write(
             dir.join(format!("node-{}.output.json", self.me)),
             serde_json::to_string_pretty(&serde_json::json!({
@@ -247,5 +320,31 @@ impl<O: Serialize> Outcome<O> {
             }))?,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::{RngExt as _, SeedableRng as _};
+
+    use super::*;
+
+    #[test]
+    fn inbox_order_is_a_stable_sort_by_sender() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+        let n = 9;
+        let mut inbox: Inbox<u32> = Inbox::default();
+        for k in 0..500u32 {
+            let from: NodeId = rng.random_range(0..n as NodeId);
+            inbox.msgs.push((from, k));
+            inbox.entries.push(Entry::new(1, from, 0, &k.to_le_bytes()));
+        }
+        let mut expected = inbox.msgs.clone();
+        expected.sort_by_key(|m| m.0);
+        let sorted = inbox.sorted_by_sender(n);
+        assert_eq!(sorted.msgs, expected);
+        for ((from, k), e) in sorted.msgs.iter().zip(&sorted.entries) {
+            assert_eq!(*e, Entry::new(1, *from, 0, &k.to_le_bytes()));
+        }
     }
 }

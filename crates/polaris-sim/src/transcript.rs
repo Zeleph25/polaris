@@ -95,12 +95,19 @@ impl Transcript {
     }
 
     pub fn to_json_lines(&self) -> String {
-        let mut s = String::new();
+        let mut out = Vec::new();
+        self.write_json_lines(&mut out).expect("writing to memory");
+        String::from_utf8(out).expect("JSON is UTF-8")
+    }
+
+    /// The same lines written as they are formed, without building the
+    /// whole text in memory first.
+    pub fn write_json_lines(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
         for e in &self.entries {
-            s.push_str(&serde_json::to_string(&Line::from(e)).expect("serializable"));
-            s.push('\n');
+            serde_json::to_writer(&mut *out, &Line::from(e))?;
+            out.write_all(b"\n")?;
         }
-        s
+        Ok(())
     }
 
     pub fn from_json_lines(s: &str) -> Result<Self, serde_json::Error> {

@@ -13,7 +13,10 @@
 //! of that round for that peer. One frame per peer and round keeps the
 //! system-call count at `n` per round whatever the protocol sends; the
 //! receiver splits a frame back into messages, so metrics, transcripts and
-//! late-message accounting stay per message.
+//! late-message accounting stay per message. Peers that get the same
+//! messages in a round, which is every peer when every message goes to all,
+//! share one encoded frame: the round's traffic is held once in memory, not
+//! once per peer.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -38,6 +41,17 @@ struct Frame {
     round: Round,
     payloads: Vec<Vec<u8>>,
 }
+
+/// The sending side of [`Frame`]: the same encoding, from borrowed payloads.
+#[derive(Serialize)]
+struct FrameRef<'a> {
+    run_id: u64,
+    round: Round,
+    payloads: &'a [Vec<u8>],
+}
+
+/// A length-prefixed frame, shared by every peer it goes to.
+type Wire = Arc<Vec<u8>>;
 
 #[derive(Serialize, Deserialize)]
 struct Hello {
@@ -65,7 +79,7 @@ pub struct Transport {
     run_id: u64,
     rx: mpsc::UnboundedReceiver<Received>,
     loopback: mpsc::UnboundedSender<Received>,
-    peers: Vec<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    peers: Vec<Option<mpsc::UnboundedSender<Wire>>>,
 }
 
 impl Transport {
@@ -113,8 +127,7 @@ impl Transport {
             let addr = *addr;
             dials.push((j, tokio::spawn(dial(addr, keys, j, run_id, deadline))));
         }
-        let mut senders: Vec<Option<mpsc::UnboundedSender<Vec<u8>>>> =
-            (0..n).map(|_| None).collect();
+        let mut senders: Vec<Option<mpsc::UnboundedSender<Wire>>> = (0..n).map(|_| None).collect();
         for (j, handle) in dials {
             let sender = handle
                 .await
@@ -149,38 +162,49 @@ impl Transport {
         })
     }
 
-    /// Queues every payload of a round for `to` as one frame, labeled with
-    /// the round it is sent in. Messages to ourselves are delivered without
-    /// touching the network.
-    pub fn send_batch(&self, to: NodeId, round: Round, payloads: Vec<Vec<u8>>) {
-        if payloads.is_empty() {
-            return;
+    /// Queues the messages of a round, labeled with the round they are sent
+    /// in: `common` to every node, `extra[j]` to node `j` only. Peers without
+    /// extra messages share one encoded frame. Messages to ourselves are
+    /// delivered without touching the network.
+    pub fn send_round(&self, round: Round, common: Vec<Vec<u8>>, mut extra: Vec<Vec<Vec<u8>>>) {
+        let shared = (!common.is_empty()).then(|| self.frame(round, &common));
+        for (j, tx) in self.peers.iter().enumerate() {
+            let Some(tx) = tx else { continue };
+            let own = extra.get_mut(j).map(std::mem::take).unwrap_or_default();
+            let frame = if own.is_empty() {
+                match &shared {
+                    Some(f) => f.clone(),
+                    None => continue,
+                }
+            } else {
+                let mut payloads = common.clone();
+                payloads.extend(own);
+                self.frame(round, &payloads)
+            };
+            let _ = tx.send(frame);
         }
-        if to == self.me {
-            for payload in payloads {
-                let _ = self.loopback.send(Received {
-                    from: self.me,
-                    round,
-                    payload,
-                    at: Instant::now(),
-                });
-            }
-            return;
+        let own = extra
+            .get_mut(usize::from(self.me))
+            .map(std::mem::take)
+            .unwrap_or_default();
+        for payload in common.into_iter().chain(own) {
+            let _ = self.loopback.send(Received {
+                from: self.me,
+                round,
+                payload,
+                at: Instant::now(),
+            });
         }
-        let frame = wire::encode(&Frame {
+    }
+
+    fn frame(&self, round: Round, payloads: &[Vec<u8>]) -> Wire {
+        let frame = wire::encode(&FrameRef {
             run_id: self.run_id,
             round,
             payloads,
         })
         .expect("frame serializes");
-        if let Some(tx) = &self.peers[usize::from(to)] {
-            let _ = tx.send(framed(&frame));
-        }
-    }
-
-    /// One message to `to`, as its own frame.
-    pub fn send(&self, to: NodeId, round: Round, payload: Vec<u8>) {
-        self.send_batch(to, round, vec![payload]);
+        Arc::new(framed(&frame))
     }
 
     pub async fn recv(&mut self) -> Option<Received> {
@@ -221,7 +245,7 @@ async fn dial(
     to: NodeId,
     run_id: u64,
     deadline: Instant,
-) -> anyhow::Result<mpsc::UnboundedSender<Vec<u8>>> {
+) -> anyhow::Result<mpsc::UnboundedSender<Wire>> {
     let started = Instant::now();
     let mut stream = loop {
         match TcpStream::connect(addr).await {
@@ -258,7 +282,7 @@ async fn dial(
     };
     stream.write_all(&framed(&wire::encode(&hello)?)).await?;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Wire>();
     tokio::spawn(async move {
         while let Some(bytes) = rx.recv().await {
             if let Err(e) = stream.write_all(&bytes).await {

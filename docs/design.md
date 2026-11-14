@@ -350,6 +350,74 @@ that record it.
     Under the omission adversary at n = 32, t = 16, with short inputs, the
     saving is 9 to 21 % for the same decision round.
 
+13. **The network runner holds a round's traffic once.** This is where the
+    memory of n parallel WXSD went, and how much of it is the protocol's.
+
+    *What happened.* On the 16-core Hetzner server (one process per node,
+    every node honest, aggregated evidence), n parallel WXSD at n = 64 did
+    not complete: the out-of-memory killer took 23 of the 64 processes. The
+    other 41 decided the same vector in round 10, as they must with fewer
+    than t crashes, but 2.2 million messages arrived late, so the run is no
+    measure of time. Their peak memory was 277 MB at the median and
+    1,705 MB at most, against 44 MB at n = 32.
+
+    *What the protocol keeps.* Each instance holds, for the current and the
+    previous epoch, the first proposal, the n votes and the n commits it has
+    seen, the digests of what it has verified or forwarded, and its trust
+    graph; older epochs are dropped (`Wxsd::end_round`). With aggregated
+    evidence a commit carries one multi-signature, so a node keeps O(n^2)
+    small records over its n instances, under 1 MB at n = 32 in the heap
+    profile below. With the paper's evidence a commit carries n votes, and
+    that becomes O(n^3).
+
+    *What the protocol sends.* TrustCast has every node forward every signed
+    message to everyone. In the round after the votes and in the round
+    after the commits, each node therefore receives n copies of every
+    instance's n messages: n^3 messages, 262,144 at n = 64, 40 MB on the
+    wire per node and round. That is the communication of n broadcasts that
+    each forward everything, and it is inherent to the baseline.
+
+    *What the runner kept.* A heap profile of one node at n = 32 (valgrind's
+    massif, 20 s rounds so that the profiled node keeps up) peaks at
+    31.9 MB in the commit round: the decoded inbox (9.4 MB), a second copy
+    of it in the per-instance inboxes of `Parallel` (10.7 MB), the encoded
+    payloads still held next to them (5.1 MB), and the transcript (5.8 MB,
+    44 bytes per received message). The sending side did not reach that
+    peak, but it cloned every payload once per peer and encoded every
+    peer's frame separately, three times the round's outgoing traffic,
+    which then waited in one unbounded queue per peer: a node that fell
+    behind kept a full copy of each round for each peer. The protocol needs
+    none of these copies.
+
+    *The changes.* (a) Honest machines send every message to all, so every
+    peer's frame is the same: it is encoded once and shared by the
+    per-peer writers, and a frame is built separately only for a peer that
+    gets messages of its own (`Transport::send_round`). (b) A message is
+    decoded as soon as it arrives, so its encoded form is freed at once,
+    and the inbox is put in sender order in place, by a stable counting
+    placement: a stable sort of the decoded messages allocates a buffer of
+    up to half the inbox. (c) `Parallel` takes each instance's messages out
+    of the round's inbox in turn instead of copying the inbox into n
+    inboxes. (d) The transcript file is written line by line rather than
+    built as one string first. Nothing changes on the wire; the machines
+    see the same inboxes in the same order, and the tests that compare
+    every network inbox with the simulator's still pass.
+
+    *What it measures.* At n = 32 the heap peak goes from 31.9 to 17.8 MB.
+    At n = 48 on a 2-core, 7 GB machine (30 s rounds, so that two cores
+    keep up), the previous runner needed 142 MB per process at the median
+    and the out-of-memory killer took 5 of the 48 processes; now each needs
+    91 MB, and all 48 decide the same vector in round 10 with no late
+    message. Rounds, bytes and outputs are unchanged.
+
+    *What stays.* The decoded inbox of a forwarding round, n^3 messages of
+    288 bytes each (75 MB at n = 64), and the transcript. The inbox is the
+    price of giving a machine its whole round at once. A machine that took
+    messages one at a time could drop forwarded duplicates as they arrive
+    and keep n^2 of them, but every protocol here, and the simulator, is
+    written against whole-round inboxes, and the baseline should run on
+    the same driver as the compiler.
+
 ## Testing
 
 - Unit and property tests per crate (`cargo test --workspace`).

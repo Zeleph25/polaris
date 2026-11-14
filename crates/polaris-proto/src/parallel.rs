@@ -148,19 +148,31 @@ impl<B: Broadcast> RoundMachine for Parallel<B> {
             return vec![];
         }
         let n = self.instances.len();
-        let mut inboxes: Vec<Vec<(NodeId, B::Msg)>> = (0..n).map(|_| Vec::new()).collect();
-        for (from, m) in inbox {
-            if usize::from(m.instance) < n {
-                inboxes[usize::from(m.instance)].push((from, m.msg));
+        // Each instance's messages are taken out of the round's inbox in
+        // turn, so that the inbox, n^3 messages in WXSD's forwarding rounds,
+        // is not held twice.
+        let mut slots: Vec<Option<(NodeId, ParMsg<B::Msg>)>> =
+            inbox.into_iter().map(Some).collect();
+        let mut by_instance: Vec<Vec<usize>> = (0..n).map(|_| Vec::new()).collect();
+        for (k, slot) in slots.iter().enumerate() {
+            if let Some((_, m)) = slot
+                && let Some(idxs) = by_instance.get_mut(usize::from(m.instance))
+            {
+                idxs.push(k);
             }
         }
         let mut out = Vec::new();
-        for (i, inbox) in inboxes.into_iter().enumerate() {
+        for (i, idxs) in by_instance.into_iter().enumerate() {
             let Some(bb) = self.instances[i].as_mut() else {
                 continue;
             };
             let id = NodeId::try_from(i).expect("fits");
-            out.extend(wrap(id, bb.end_round(&mut self.sub, round, inbox)));
+            let mine: Vec<(NodeId, B::Msg)> = idxs
+                .into_iter()
+                .filter_map(|k| slots[k].take())
+                .map(|(from, m)| (from, m.msg))
+                .collect();
+            out.extend(wrap(id, bb.end_round(&mut self.sub, round, mine)));
             if let Some(v) = bb.output() {
                 self.delivered[i] = Some(v.clone());
                 self.instances[i] = None;
