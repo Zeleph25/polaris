@@ -592,7 +592,7 @@ that record it.
 
 Experiments on real hosts (the launcher, a host check and the experiment
 file are in place; docs/multihost.md), the Monte Carlo
-baseline, and a long soak of the complete system. The comparison with
+baseline (candidates in docs/montecarlo.md), and a long soak of the complete system. The comparison with
 honest-majority protocols (`eval/honest_majority.py`, Apollo and Sync
 HotStuff from the Apollo artefact) runs on loopback only. The improvements (accusations shared across
 views and with the WXSD trust graph, aggregated vote evidence, sequential
