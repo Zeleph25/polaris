@@ -23,10 +23,18 @@ one round; give start_in_s enough room for the copies and the ssh startup.
 
 The local binary is target/release/polaris unless --binary says
 otherwise; build it first with `cargo build --release`.
+
+`worker_threads` (in [defaults] or an experiment) sets the worker threads
+of every node's runtime for network runs: a number, or "auto" for the
+cores of a host divided by the nodes it runs, at least 1. Without it a
+node starts one worker per core, whatever else runs on the host.
+--worker-threads overrides the file for every experiment ("default" for
+one worker per core).
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -66,7 +74,29 @@ def host_name(target):
     return target.split("@", 1)[-1]
 
 
-def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools):
+def host_cores(target, tools, cache={}):
+    """Cores of an ssh target, asked once per target."""
+    if target not in cache:
+        out = subprocess.run([tools["ssh"], target, "nproc"], check=True,
+                             capture_output=True, text=True).stdout
+        cache[target] = int(out.split()[-1])
+    return cache[target]
+
+
+def worker_threads(exp, defaults, n, hosts, tools):
+    """The --worker-threads of a network run, or None for one per core."""
+    w = exp.get("worker_threads", defaults.get("worker_threads"))
+    if w != "auto":
+        return w
+    if not hosts:
+        return max(1, (os.cpu_count() or 1) // n)
+    targets = hosts["list"]
+    per_host = -(-n // len(targets))
+    cores = min(host_cores(h, tools) for h in targets[:n])
+    return max(1, cores // per_host)
+
+
+def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools, workers):
     round_ms = exp.get("round_ms", defaults["round_ms"])
     gen = [
         str(binary), "genconfig",
@@ -89,6 +119,8 @@ def run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools):
         gen += ["--share-accusations"]
     if exp.get("share_disclosures"):
         gen += ["--share-disclosures"]
+    if workers is not None:
+        gen += ["--worker-threads", str(workers)]
     if hosts:
         gen += ["--hosts", ",".join(host_name(h) for h in hosts["list"])]
     subprocess.run(gen, check=True, capture_output=True)
@@ -133,10 +165,12 @@ def run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
     d = out / exp["name"] / f"n{n}-t{t}" / f"rep{rep}"
     d.mkdir(parents=True, exist_ok=True)
     mode = exp.get("mode", "net")
+    workers = None
     if mode == "sim":
         codes, elapsed = run_sim(binary, exp, n, t, rep, d, defaults)
     else:
-        codes, elapsed = run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools)
+        workers = worker_threads(exp, defaults, n, hosts, tools)
+        codes, elapsed = run_net(binary, exp, n, t, rep, d, defaults, port, hosts, tools, workers)
     ok = all(c == 0 for c in codes)
     (d / "run.json").write_text(json.dumps({
         "experiment": exp["name"], "mode": mode, "protocol": exp["protocol"],
@@ -144,6 +178,7 @@ def run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
         "n": n, "t": t, "rep": rep, "input_bytes": exp.get("input_bytes", 0),
         "hosts": [host_name(h) for h in hosts["list"]] if (hosts and mode == "net") else ["localhost"],
         "round_ms": exp.get("round_ms", defaults["round_ms"]) if mode == "net" else None,
+        "worker_threads": workers,
         "byzantine": exp.get("byzantine", t) if mode == "sim" else 0,
         "adversary": exp.get("adversary", "mixed") if mode == "sim" else None,
         "exit_codes": codes, "ok": ok, "wall_s": round(elapsed, 3),
@@ -159,6 +194,7 @@ def main():
     ap.add_argument("--out", default="eval/results")
     ap.add_argument("--binary", default="target/release/polaris")
     ap.add_argument("--only", help="run only the experiment with this name")
+    ap.add_argument("--worker-threads", help='a number, "auto" or "default"; overrides the matrix')
     ap.add_argument("--ssh", default="ssh", help="the ssh command (for tests)")
     ap.add_argument("--rsync", default="rsync", help="the rsync command (for tests)")
     args = ap.parse_args()
@@ -170,6 +206,12 @@ def main():
     defaults.setdefault("start_in_s", 3)
     defaults.setdefault("base_port", 7000)
     defaults.setdefault("max_rounds", 400)
+    if args.worker_threads is not None:
+        w = args.worker_threads
+        w = None if w == "default" else w if w == "auto" else int(w)
+        defaults["worker_threads"] = w
+        for exp in matrix["experiment"]:
+            exp.pop("worker_threads", None)
     binary = Path(args.binary)
     if not binary.exists():
         sys.exit(f"{binary} not found; run cargo build --release")

@@ -1,6 +1,7 @@
 //! `polaris` command line: key generation, cluster configs, one node, and a
 //! local in-process cluster checked against the simulator.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,6 +99,11 @@ enum Cmd {
         /// `ic`: send each disclosure once per run instead of once per view.
         #[arg(long)]
         share_disclosures: bool,
+        /// Worker threads of each node's runtime; one per core by default.
+        /// With k nodes on a host, about cores / k keeps them from
+        /// contending for the cores.
+        #[arg(long)]
+        worker_threads: Option<NonZeroUsize>,
     },
     /// Run one node from a config file.
     Node {
@@ -164,6 +170,9 @@ enum Cmd {
         share_accusations: bool,
         #[arg(long)]
         share_disclosures: bool,
+        /// Worker threads of the runtime all nodes share; one per core by default.
+        #[arg(long)]
+        worker_threads: Option<NonZeroUsize>,
         /// Write per-node metrics, transcripts and outputs here.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -226,15 +235,29 @@ macro_rules! with_machines {
     };
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
-    match Cli::parse().cmd {
+    let cmd = Cli::parse().cmd;
+    let workers = match &cmd {
+        Cmd::Node { config } => NodeConfig::load(config)?.worker_threads,
+        Cmd::Local { worker_threads, .. } => *worker_threads,
+        _ => None,
+    };
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    runtime.enable_all();
+    if let Some(w) = workers {
+        runtime.worker_threads(w.get());
+    }
+    runtime.build()?.block_on(run(cmd))
+}
+
+async fn run(cmd: Cmd) -> anyhow::Result<()> {
+    match cmd {
         Cmd::Keygen {
             n,
             t,
@@ -264,6 +287,7 @@ async fn main() -> anyhow::Result<()> {
             aggregate_votes,
             share_accusations,
             share_disclosures,
+            worker_threads,
         } => {
             let params = Params::new(n, t)?;
             write_keys(params, run_id, seed, &out)?;
@@ -299,6 +323,7 @@ async fn main() -> anyhow::Result<()> {
                     input_bytes,
                     view_spacing,
                     max_views: None,
+                    worker_threads,
                 };
                 std::fs::write(out.join(format!("node-{i}.toml")), cfg.to_toml()?)?;
             }
@@ -416,6 +441,7 @@ async fn main() -> anyhow::Result<()> {
             aggregate_votes,
             share_accusations,
             share_disclosures,
+            worker_threads: _,
             out,
         } => {
             let spec = LocalSpec {

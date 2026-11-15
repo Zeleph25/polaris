@@ -19,6 +19,10 @@ reps = 3
 start_in_s = 30
 base_port = 7000
 max_rounds = 400
+# Each node's runtime gets its host's cores divided by the nodes on that
+# host, at least 1, instead of one worker per core (docs/design.md,
+# decision 14).
+worker_threads = "auto"
 
 [hosts]
 list = ["user@host1", "user@host2", "user@host3", "user@host4"]

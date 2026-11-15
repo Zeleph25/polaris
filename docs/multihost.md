@@ -101,6 +101,12 @@ python3 eval/run.py eval/hosts.toml --out eval/results/hosts
 python3 eval/aggregate.py eval/results/hosts
 ```
 
+The file sets `worker_threads = "auto"`: each node's runtime gets its
+host's cores divided by the nodes on that host, at least 1, instead of one
+worker per core (`run.py --worker-threads default` restores that; see
+decision 14 in docs/design.md). The value is recorded in every `run.json`
+and in `summary.csv`.
+
 Each run takes about 30 s to start, plus its rounds at 500 ms, so the 72
 runs of the file take about an hour and a half. `--only m-ic-ds` runs one
 experiment. Send back the `eval/results/hosts` directory, or at least the

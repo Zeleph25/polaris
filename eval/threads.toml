@@ -1,0 +1,29 @@
+# Worker threads per node on one host: the same runs with one worker per
+# core (the default) and with cores / nodes (auto), compared before the
+# full matrix (docs/design.md, decision 14).
+#
+#   python3 eval/run.py eval/threads.toml --worker-threads default --out eval/results/threads-default
+#   python3 eval/run.py eval/threads.toml --worker-threads auto --out eval/results/threads-auto
+#   python3 eval/aggregate.py eval/results/threads-default
+#   python3 eval/aggregate.py eval/results/threads-auto
+
+[defaults]
+round_ms = 500
+reps = 3
+start_in_s = 20
+base_port = 7000
+max_rounds = 400
+
+[[experiment]]
+name = "t-ic-wxsd-agg"
+protocol = "ic"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[32, 16]]
+
+[[experiment]]
+name = "t-par-wxsd-agg"
+protocol = "parallel"
+broadcast = "wxsd"
+aggregate_votes = true
+sizes = [[32, 16]]

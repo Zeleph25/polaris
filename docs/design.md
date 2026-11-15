@@ -418,6 +418,54 @@ that record it.
     written against whole-round inboxes, and the baseline should run on
     the same driver as the compiler.
 
+14. **Worker threads per node.** `worker_threads` in a node's config
+    (`--worker-threads` for `genconfig` and `local`; `worker_threads` in an
+    experiment file, where `"auto"` means the host's cores divided by the
+    nodes on that host, at least 1) sets the worker threads of the node's
+    tokio runtime. Without it the runtime starts one per core, as before.
+
+    *Why it is a choice.* A node's round machine runs on one task; the
+    other tasks read and write its sockets. Nodes on the same host each
+    start one worker per core: on the 16-core Hetzner server, 64 nodes
+    started 1,024. Workers beyond the cores cannot make a round faster.
+    Idle ones spin while they look for work before they park, and the
+    allocator gives threads their own arenas, so they cost CPU time and
+    memory that the protocol does not use. On that server, CPU time per
+    process was 1.6 to 2.4 times that of the 2-core runs for the same
+    rounds, bytes and signatures, while signature verification itself
+    took less time in all but the smallest Dolev-Strong runs.
+
+    *What it measures.* On the 2-core machine, at n = 32 with 2.5 s rounds,
+    two runs each with one, two (the default there) and sixteen workers per
+    node: memory per process follows the thread count, 28, 31 and 33 to
+    34 MB for n parallel WXSD; its CPU time stays within 7 % (436 to
+    467 ms) and its time past the round schedule within 1.7 to 1.9 s.
+    Polaris over WXSD decides about 220 ms past its round with one worker
+    against 176 to 191 ms with more, since one thread then reads the
+    sockets and runs the machine in turn.
+
+    On a 16-core server (Hetzner CPX62, shared vCPUs), `eval/threads.toml`
+    compares the default, 16 workers per node, with `"auto"`, which gives 1
+    to each of the 32 nodes: three runs each at n = 32 with 500 ms rounds.
+    Polaris over WXSD spends 194 ms of CPU per process with one worker
+    against 220 ms with 16, decides 53 to 65 ms past its round against 60
+    to 64 ms, and uses 15 MB either way. n parallel WXSD spends 854 against
+    880 ms of CPU and needs 25 against 28 MB at the median. That baseline
+    does not keep up with 500 ms rounds on this server with either setting
+    (over 120,000 late messages per run, decisions 420 to 470 ms past the
+    round): its signature checks alone took 1.4 to 1.8 times as long as on
+    the CPX62 of the README's runs, which shows how much shared cores vary
+    from one server to the next.
+
+    *The choice.* Network runs with several nodes on a host use `"auto"`
+    (`eval/hosts.toml`): each node gets its share of the cores, about what
+    it would have on a machine of its own, and its memory and CPU time no
+    longer grow with the host's core count. On the 16-core server it is as
+    fast as the default or faster, with less CPU time and memory. The value is part of every
+    result: each node writes the worker count its runtime had into its
+    output file, `run.json` records what the harness asked for, and
+    `summary.csv` has a column for it.
+
 ## Testing
 
 - Unit and property tests per crate (`cargo test --workspace`).

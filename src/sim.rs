@@ -186,6 +186,7 @@ where
             decided_after: None,
             ran_for: Duration::ZERO,
             resources: Resources::now(),
+            worker_threads: None,
         })
         .collect();
     Ok(SimResult {

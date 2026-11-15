@@ -1,5 +1,6 @@
 //! Per-node configuration file (TOML).
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -81,6 +82,9 @@ pub struct NodeConfig {
     /// Views started at most for `ic`; unlimited by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_views: Option<u32>,
+    /// Worker threads of the node's runtime; one per core by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_threads: Option<NonZeroUsize>,
 }
 
 fn default_max_rounds() -> u32 {

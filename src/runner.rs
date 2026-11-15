@@ -44,6 +44,8 @@ pub struct Outcome<O> {
     pub ran_for: Duration,
     /// CPU time and peak memory of this process at the end of the run.
     pub resources: Resources,
+    /// Worker threads of the runtime the node ran on; `None` in the simulator.
+    pub worker_threads: Option<usize>,
 }
 
 /// What the process has used so far, from `getrusage`.
@@ -173,6 +175,7 @@ where
         decided_after,
         ran_for: start.elapsed(),
         resources: Resources::now(),
+        worker_threads: Some(tokio::runtime::Handle::current().metrics().num_workers()),
     }
 }
 
@@ -316,6 +319,7 @@ impl<O: Serialize> Outcome<O> {
                 "decided_after_ms": self.decided_after.map(|d| d.as_millis()),
                 "ran_for_ms": self.ran_for.as_millis(),
                 "resources": self.resources,
+                "worker_threads": self.worker_threads,
                 "output": self.output,
             }))?,
         )?;

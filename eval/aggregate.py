@@ -11,7 +11,8 @@ decision (network runs only), the mean bytes and messages sent per node,
 the mean signature verification time, CPU time and peak memory per node
 (for simulator runs, of the one process), and whether every node decided
 the same output. Simulator runs report the honest nodes only. Per experiment and size: mean and standard
-deviation over the repetitions. Writes summary.csv and summary.md next to
+deviation over the repetitions, and the worker threads the nodes' runtimes
+had (empty for simulator runs, a range if they differ). Writes summary.csv and summary.md next to
 the runs and, with --plots and matplotlib, one PNG per metric.
 """
 
@@ -41,12 +42,15 @@ def read_run(d):
         return None
     rows = []
     outputs = set()
+    workers = set()
     runs = d / "runs"
     for f in sorted(runs.glob("node-*.metrics.jsonl")):
         node = int(f.stem.split("-")[1].split(".")[0])
         summary = next(json.loads(l) for l in f.read_text().splitlines() if '"summary"' in l)
         out = json.loads((runs / f"node-{node}.output.json").read_text())
         outputs.add(json.dumps(out["output"], sort_keys=True))
+        if out.get("worker_threads") is not None:
+            workers.add(out["worker_threads"])
         res = out.get("resources", {})
         rows.append({
             "decision_round": summary["decision_round"],
@@ -65,6 +69,7 @@ def read_run(d):
         **meta,
         "nodes": len(rows),
         "agreement": len(outputs) == 1,
+        "worker_threads": workers,
         "decision_round": max(r["decision_round"] for r in rows),
         "decided_after_ms": max(r["decided_after_ms"] or 0 for r in rows),
         "bytes_sent": statistics.mean(r["bytes_sent"] for r in rows),
@@ -75,6 +80,14 @@ def read_run(d):
         "max_rss_mb": statistics.mean(r["max_rss_mb"] for r in rows),
         "late_msgs": sum(r["late_msgs"] for r in rows),
     }
+
+
+def span(values):
+    """One value, a range, or empty."""
+    if not values:
+        return ""
+    lo, hi = min(values), max(values)
+    return str(lo) if lo == hi else f"{lo}-{hi}"
 
 
 def main():
@@ -92,7 +105,8 @@ def main():
             continue
         groups[(r["experiment"], r["n"], r["t"])].append(r)
 
-    header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "input_bytes", "byzantine", "reps", "agreement"]
+    header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "input_bytes", "byzantine", "reps", "agreement",
+              "worker_threads"]
     for key, _ in METRICS:
         header += [f"{key}_mean", f"{key}_std"]
     table = []
@@ -103,6 +117,7 @@ def main():
             "n": n, "t": t, "input_bytes": runs[0].get("input_bytes", 0),
             "byzantine": runs[0].get("byzantine", 0),
             "reps": len(runs), "agreement": all(r["agreement"] for r in runs),
+            "worker_threads": span(set().union(*(r["worker_threads"] for r in runs))),
         }
         for key, _ in METRICS:
             vals = [r[key] for r in runs]
@@ -115,11 +130,12 @@ def main():
         w.writeheader()
         w.writerows(table)
 
-    lines = ["| experiment | mode | n | t | input B | byz | reps | agree | " + " | ".join(label for _, label in METRICS) + " |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
+    lines = ["| experiment | mode | n | t | input B | byz | reps | agree | workers | " + " | ".join(label for _, label in METRICS) + " |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
     for row in table:
         cells = [row["experiment"], row["mode"], str(row["n"]), str(row["t"]), str(row["input_bytes"]),
-                 str(row["byzantine"]), str(row["reps"]), "yes" if row["agreement"] else "NO"]
+                 str(row["byzantine"]), str(row["reps"]), "yes" if row["agreement"] else "NO",
+                 row["worker_threads"] or "-"]
         for key, _ in METRICS:
             m, s = row[f"{key}_mean"], row[f"{key}_std"]
             cells.append(f"{m:,.0f} +- {s:,.0f}" if s else f"{m:,.0f}")
