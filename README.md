@@ -273,9 +273,11 @@ Every run keeps its cluster files, the nodes' logs and their metrics,
 transcript and output files under `eval/results/<experiment>/n<n>-t<t>/rep<k>/`,
 and `summary.md`, `summary.csv` and one PNG per metric appear in
 `eval/results/`. The metrics are the decision round and the wall-clock time
-to decision (the largest over the nodes), bytes and messages sent, signature
-verification time, CPU time and peak memory (means per node), late messages,
-and whether every node decided the same output. Python 3.11 or newer;
+to decision (the largest over the nodes), bytes and messages sent and
+received, signature verification time, CPU time and peak memory (means per
+node), late messages, and whether every node decided the same output. Time,
+CPU and memory come from network runs only: the simulator runs every node in
+one process, so those cells are empty in its rows. Python 3.11 or newer;
 matplotlib for the plots.
 
 Runs under attack use `polaris sim`, which draws `--byzantine` nodes (at
