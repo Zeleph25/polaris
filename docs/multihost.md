@@ -159,9 +159,12 @@ Servers bill by the hour until they are deleted, even idle ones; the
 Hetzner Console lists anything left.
 
 A new account may create only a few dedicated cores ("dedicated core limit
-exceeded"). The Limits tab of the project's overview in the Hetzner Console
-shows the limits, and its Request change button asks for more (handled by
-hand, during business hours). Until then, `single-shared` (one 16-core
+exceeded"); with 16, `TYPE=ccx43 eval/hetzner/up.sh single` creates a
+CCX43 (16 dedicated cores), on which the README's network numbers were
+measured. The Limits tab of the projects page in the Hetzner Console
+shows the limits, and its Request limit increase button asks for more
+(handled by hand, during business hours; an account that is too new cannot
+ask yet). Until then, `single-shared` (one 16-core
 cpx62) and `regions-shared` (8-core cpx41 or cpx42, depending on the
 location) use shared cores: rounds, bytes and signatures are the same,
 timings are noisier.

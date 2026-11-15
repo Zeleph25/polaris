@@ -410,6 +410,11 @@ that record it.
     91 MB, and all 48 decide the same vector in round 10 with no late
     message. Rounds, bytes and outputs are unchanged.
 
+    At n = 64, on a server with 16 dedicated cores (Hetzner CCX43), n
+    parallel WXSD now completes in every run, all 64 processes deciding the
+    same vector, with 162 to 163 MB per process on average and no late
+    message at its minimum round of 3000 ms (decision 15).
+
     *What stays.* The decoded inbox of a forwarding round, n^3 messages of
     288 bytes each (75 MB at n = 64), and the transcript. The inbox is the
     price of giving a machine its whole round at once. A machine that took
@@ -506,6 +511,16 @@ that record it.
     made longer, which holds as long as the work of a round does not grow
     with its length. A minimum also belongs to its machine: on shared cores
     it moves with the neighbors (decision 14).
+
+    *What it found.* On the CCX43 (16 dedicated vCPUs, one worker per node),
+    with three runs at every sustained length: at n = 64, polaris over
+    Dolev-Strong and over WXSD and n parallel Dolev-Strong sustain 250 ms
+    for both values of t. That is the shortest length tried, so 250 ms
+    bounds their minimum from above. n parallel WXSD has late messages at
+    250, 500, 1000 and 2000 ms and none at 4000 and 3000 ms, for both values
+    of t: its minimum is 3000 ms, and the shortest sustained length lies
+    above 2000 ms. It is the only row of the matrix that does not run at 500
+    ms.
 
 ## Testing
 

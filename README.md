@@ -122,8 +122,11 @@ without a decision), `--input-bytes` the size of every node's input
 (default: the short label `input-of-<i>`), `--aggregate-votes` makes
 WXSD send commit evidence as one BLS multi-signature instead of the signed
 votes, `--share-accusations` carries the accusations of finished
-instances into the next ones, and `--share-disclosures` sends each
-disclosure once per run instead of once per view. `genconfig` writes
+instances into the next ones, `--share-disclosures` sends each
+disclosure once per run instead of once per view, and `--worker-threads`
+sets the worker threads of each node's runtime (default one per core;
+with several nodes on a host, about cores / nodes, see decision 14 in
+docs/design.md). `genconfig` writes
 `keyring.toml` (every node's public keys and proofs of possession),
 `node-<i>.secret.toml` and `node-<i>.toml`. The config carries the peer
 addresses, the round length, the shared wall-clock start of round 0, the
@@ -246,7 +249,8 @@ every later one: at t = 24, one seed in ten took 649 rounds.
 
 The n parallel WXSD network run at n = 32 only completes with aggregation;
 with 32 processes on two cores at 500 ms rounds it still reports late
-messages, so its wall-clock numbers belong on more hosts.
+messages. On a 16-core server it runs on schedule (see the Evaluation
+section below).
 
 Logging goes through `tracing`; set `RUST_LOG=debug` for per-round detail.
 
@@ -300,6 +304,67 @@ ssh: [docs/multihost.md](docs/multihost.md) lists what the hosts need,
 `eval/round_search.py` finds the shortest round length at which a
 construction has no late message, and `run.py --round-ms-from` runs every
 row at 500 ms or at that minimum (decision 15 in docs/design.md).
+
+### On one server with 16 dedicated cores
+
+The runs of `eval/hosts.toml` (every node honest, three runs each) on one
+Hetzner CCX43 server (16 dedicated AMD EPYC vCPUs, 64 GB), every node a
+separate process with one runtime worker (decision 14 in docs/design.md).
+Every row runs with 500 ms rounds unless the round search (decision 15)
+found that it needs longer ones, which only n parallel WXSD at n = 64 does.
+Time to decision is the largest over the nodes, CPU time and peak memory
+are means per node, and the ranges cover the two values of t:
+
+| | n | round | t = n/2 | t = 3n/4 | past the round | CPU per node | memory per node |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| polaris over Dolev-Strong | 16 | 500 ms | 7.5 s (round 14) | 11.5 s (round 22) | 3 to 5 ms | 76 to 83 ms | 15 MB |
+| polaris over Dolev-Strong | 32 | 500 ms | 11.5 s (round 22) | 17.5 s (round 34) | 12 to 13 ms | 129 to 135 ms | 15 MB |
+| polaris over Dolev-Strong | 64 | 500 ms | 19.5 s (round 38) | 29.5 s (round 58) | 37 to 38 ms | 323 to 332 ms | 15 MB |
+| polaris over WXSD, aggregated | 16 | 500 ms | 8.5 s (round 16) | 14.5 s (round 28) | 24 ms | 113 to 117 ms | 15 MB |
+| polaris over WXSD, aggregated | 32 | 500 ms | 8.6 s (round 16) | 14.6 s (round 28) | 61 ms | 187 to 194 ms | 15 MB |
+| polaris over WXSD, aggregated | 64 | 500 ms | 8.6 s (round 16) | 14.6 s (round 28) | 148 to 149 ms | 337 to 346 ms | 15 MB |
+| n parallel Dolev-Strong | 16 | 500 ms | 4.5 s (round 8) | 6.5 s (round 12) | 2 ms | 68 to 73 ms | 15 MB |
+| n parallel Dolev-Strong | 32 | 500 ms | 8.5 s (round 16) | 12.5 s (round 24) | 1 ms | 106 to 107 ms | 15 MB |
+| n parallel Dolev-Strong | 64 | 500 ms | 16.5 s (round 32) | 24.5 s (round 48) | 2 ms | 189 to 193 ms | 15 MB |
+| n parallel WXSD, aggregated | 16 | 500 ms | 5.6 s (round 10) | 9.6 s (round 18) | 86 to 90 ms | 305 to 306 ms | 15 MB |
+| n parallel WXSD, aggregated | 32 | 500 ms | 5.8 s (round 10) | 9.9 s (round 18) | 347 to 367 ms | 684 to 702 ms | 25 MB |
+| n parallel WXSD, aggregated | 64 | 3000 ms | 35.1 s (round 10) | 59.1 s (round 18) | 2,086 to 2,128 ms | 2,940 to 3,047 ms | 162 to 163 MB |
+
+Every run reaches the simulator's decision round, with the same output at
+every node and no late message. Time to decision is the round schedule, r +
+1 round lengths for decision round r, plus the processing of the last
+round: 1 to 367 ms with 500 ms rounds, and about 2.1 s for n parallel WXSD
+at n = 64 with its 3 s rounds.
+
+The shortest round length with no late message in any run, at n = 64
+(`eval/round_search.py`; a length counts once three runs have none, and
+fails at its first run with one):
+
+| | t = n/2 | t = 3n/4 |
+| --- | --- | --- |
+| polaris over Dolev-Strong | at most 250 ms | at most 250 ms |
+| polaris over WXSD, aggregated | at most 250 ms | at most 250 ms |
+| n parallel Dolev-Strong | at most 250 ms | at most 250 ms |
+| n parallel WXSD, aggregated | 3000 ms | 3000 ms |
+
+250 ms is the shortest length tried, so for the first three it is an upper
+bound. n parallel WXSD had late messages at 2000 ms and none at 3000 or
+4000 ms.
+
+At n = 64 the round length decides the comparison: polaris over WXSD
+decides in 8.6 s with t = n/2 and 14.6 s with t = 3n/4, while n parallel
+WXSD, which needs six times longer rounds, decides in 35.1 s and 59.1 s,
+about four times later, sending 20 times the bytes (84 MB against 4.3 MB
+per node) and verifying 26 times the signatures. n parallel Dolev-Strong
+decides in 16.5 s and 24.5 s and sends about a seventh of polaris's bytes.
+
+An earlier run on a server with 16 shared cores (CPX62), with the previous
+network runner, did not complete n parallel WXSD at n = 64: the
+out-of-memory killer took 23 of its 64 processes, which had peaked at 277
+MB at the median and 1,705 MB at most. Decision 13 traces that memory to
+the runner and removes most of it; on the CCX43 every process of that
+baseline stays at 162 to 163 MB. Shared cores also make timings vary from
+one server to the next (decision 14), so no number above comes from them.
 
 ### Against honest-majority protocols
 
