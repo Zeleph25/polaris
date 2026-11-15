@@ -105,7 +105,8 @@ if [ "${#ips[@]}" -gt 1 ]; then
 fi
 cat <<MSG
   python3 eval/run.py eval/hosts.hetzner.toml --only smoke-echo --out eval/results/$out
-  python3 eval/run.py eval/hosts.hetzner.toml --out eval/results/$out
+  python3 eval/round_search.py eval/hosts.hetzner.toml --sizes 64:32,64:48 --out eval/results/$out/search
+  python3 eval/run.py eval/hosts.hetzner.toml --round-ms-from eval/results/$out/search/minimums.csv --out eval/results/$out
   python3 eval/aggregate.py eval/results/$out
 
 Then, back on this machine, copy the results back as one archive (the

@@ -297,6 +297,9 @@ four protocols honest and under attack) runs in about seven minutes on two
 cores. Across several machines, the same launcher starts the nodes over
 ssh: [docs/multihost.md](docs/multihost.md) lists what the hosts need,
 `eval/check_hosts.py` checks them, and `eval/hosts.toml` holds the runs.
+`eval/round_search.py` finds the shortest round length at which a
+construction has no late message, and `run.py --round-ms-from` runs every
+row at 500 ms or at that minimum (decision 15 in docs/design.md).
 
 ### Against honest-majority protocols
 

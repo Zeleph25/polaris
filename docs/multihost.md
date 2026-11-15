@@ -166,10 +166,17 @@ cpx62) and `regions-shared` (8-core cpx41 or cpx42, depending on the
 location) use shared cores: rounds, bytes and signatures are the same,
 timings are noisier.
 
-On the single server, the 64 nodes of n = 64 share 48 cores. polaris
-needs little of them, but n parallel WXSD at n = 64 may not finish its
-rounds in 500 ms; if its runs report late messages, rerun that experiment
-with `round_ms = 1000` or 2000 in its table.
+On the single server, the 64 nodes of n = 64 share 48 cores, and n
+parallel WXSD at n = 64 does not finish its rounds in 500 ms there. The
+commands `up.sh` prints therefore start with a search:
+`eval/round_search.py` finds, for every construction at n = 64, the
+shortest round length with no late message (decision 15 in
+docs/design.md), and `run.py --round-ms-from` then runs every row at 500
+ms or at that minimum, whichever is longer. `summary.csv` gives the
+round length of every row, and the search's `minimums.csv` and
+`minimums.md` what it tried. On one CCX63 the search takes about half an
+hour and the matrix about as long; a single server starts each run 10 s
+after writing its configs, against 30 s across several hosts.
 
 ## Latency
 

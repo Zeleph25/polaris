@@ -461,10 +461,51 @@ that record it.
     (`eval/hosts.toml`): each node gets its share of the cores, about what
     it would have on a machine of its own, and its memory and CPU time no
     longer grow with the host's core count. On the 16-core server it is as
-    fast as the default or faster, with less CPU time and memory. The value is part of every
-    result: each node writes the worker count its runtime had into its
-    output file, `run.json` records what the harness asked for, and
-    `summary.csv` has a column for it.
+    fast as the default or faster, with less CPU time and memory. The value
+    is part of every result: each node writes the worker count its runtime
+    had into its output file, `run.json` records what the harness asked for,
+    and `summary.csv` has a column for it.
+
+15. **Round length: 500 ms where it is sustained, the measured minimum
+    where it is not.**
+
+    *Why.* A network run measures the protocol only if it is synchronous. A
+    late message means that a round was shorter than a node needed to
+    receive and process it, and the protocol then runs outside its model.
+    One round length for every construction does not work: 500 ms is too
+    short for n parallel WXSD at n = 64 on one server, whose heaviest rounds
+    bring every node n^3 forwarded messages, and a length long enough for it
+    would hide how cheap the compiler's rounds are. So every construction
+    runs at 500 ms where it keeps up with it, and at its measured minimum
+    where it does not, and every row of the network table gives its round
+    length.
+
+    *Sustained* means zero late messages in every repetition, every process
+    exiting normally and all of them deciding the same output. Nothing else,
+    such as time past the round or CPU time, enters.
+
+    *The search* (`eval/round_search.py`) tries 250, 500, 1000, 2000 and
+    4000 ms from the shortest up and stops at the first sustained length. It
+    then tries one length halfway between that one and the last length that
+    failed, and the minimum is the shorter of the sustained ones. With a
+    failed length below it, the minimum is thus at most 1.5 times the
+    shortest length that would be sustained; when 250 ms is sustained
+    already, it says only that the construction needs no more. A length
+    fails at its first repetition with a late message, so a failure costs
+    one run. Doubling covers a factor of 16 in five steps, and the halving
+    step keeps the answer close without a longer ladder. The search runs at
+    n = 64 with t = n/2 and t = 3n/4, for both constructions over both
+    broadcasts, and its minimums form a table of their own.
+
+    *The matrix* then runs every row at 500 ms or at its minimum, whichever
+    is longer (`run.py --round-ms-from`). The rows at a minimum are fresh
+    runs rather than the repetitions that happened to pass the search, which
+    keeps the search from choosing its own best runs.
+
+    *What it assumes.* That a sustained length stays sustained when it is
+    made longer, which holds as long as the work of a round does not grow
+    with its length. A minimum also belongs to its machine: on shared cores
+    it moves with the neighbors (decision 14).
 
 ## Testing
 

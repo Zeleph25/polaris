@@ -30,9 +30,14 @@ cores of a host divided by the nodes it runs, at least 1. Without it a
 node starts one worker per core, whatever else runs on the host.
 --worker-threads overrides the file for every experiment ("default" for
 one worker per core).
+
+--round-ms-from takes the minimums.csv of eval/round_search.py: a network
+run whose experiment and size have a measured minimum longer than its
+round length runs at that minimum instead (docs/design.md, decision 15).
 """
 
 import argparse
+import csv
 import json
 import os
 import subprocess
@@ -188,6 +193,33 @@ def run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
     return ok
 
 
+def load_matrix(path, worker_threads=None):
+    """The experiments of a matrix file and its defaults, filled in;
+    worker_threads, if given, overrides the file."""
+    matrix = tomllib.loads(Path(path).read_text())
+    defaults = matrix.setdefault("defaults", {})
+    defaults.setdefault("round_ms", 500)
+    defaults.setdefault("reps", 3)
+    defaults.setdefault("start_in_s", 3)
+    defaults.setdefault("base_port", 7000)
+    defaults.setdefault("max_rounds", 400)
+    if worker_threads is not None:
+        w = None if worker_threads == "default" else worker_threads if worker_threads == "auto" else int(worker_threads)
+        defaults["worker_threads"] = w
+        for exp in matrix["experiment"]:
+            exp.pop("worker_threads", None)
+    return matrix, defaults
+
+
+def load_minimums(path):
+    """(experiment, n, t) -> minimum round length in ms, from the
+    minimums.csv of eval/round_search.py; None where no length of its ladder
+    was sustained."""
+    with open(path, newline="") as f:
+        return {(r["experiment"], int(r["n"]), int(r["t"])): (int(r["minimum_ms"]) if r["minimum_ms"] else None)
+                for r in csv.DictReader(f)}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("matrix")
@@ -195,23 +227,13 @@ def main():
     ap.add_argument("--binary", default="target/release/polaris")
     ap.add_argument("--only", help="run only the experiment with this name")
     ap.add_argument("--worker-threads", help='a number, "auto" or "default"; overrides the matrix')
+    ap.add_argument("--round-ms-from", help="minimums.csv of eval/round_search.py")
     ap.add_argument("--ssh", default="ssh", help="the ssh command (for tests)")
     ap.add_argument("--rsync", default="rsync", help="the rsync command (for tests)")
     args = ap.parse_args()
 
-    matrix = tomllib.loads(Path(args.matrix).read_text())
-    defaults = matrix.get("defaults", {})
-    defaults.setdefault("round_ms", 500)
-    defaults.setdefault("reps", 3)
-    defaults.setdefault("start_in_s", 3)
-    defaults.setdefault("base_port", 7000)
-    defaults.setdefault("max_rounds", 400)
-    if args.worker_threads is not None:
-        w = args.worker_threads
-        w = None if w == "default" else w if w == "auto" else int(w)
-        defaults["worker_threads"] = w
-        for exp in matrix["experiment"]:
-            exp.pop("worker_threads", None)
+    matrix, defaults = load_matrix(args.matrix, args.worker_threads)
+    minimums = load_minimums(args.round_ms_from) if args.round_ms_from else {}
     binary = Path(args.binary)
     if not binary.exists():
         sys.exit(f"{binary} not found; run cargo build --release")
@@ -224,8 +246,17 @@ def main():
         if args.only and exp["name"] != args.only:
             continue
         for n, t in exp["sizes"]:
+            run_exp = exp
+            if (exp["name"], n, t) in minimums:
+                base = exp.get("round_ms", defaults["round_ms"])
+                minimum = minimums[(exp["name"], n, t)]
+                if minimum is None:
+                    print(f"{exp['name']} n={n} t={t}: no round length of the search was sustained; "
+                          f"running at {base} ms", flush=True)
+                elif minimum > base:
+                    run_exp = {**exp, "round_ms": minimum}
             for rep in range(exp.get("reps", defaults["reps"])):
-                if not run_once(binary, exp, n, t, rep, out, defaults, port, hosts, tools):
+                if not run_once(binary, run_exp, n, t, rep, out, defaults, port, hosts, tools):
                     failures += 1
                 # A fresh port range per run keeps lingering sockets out of the way.
                 port += n

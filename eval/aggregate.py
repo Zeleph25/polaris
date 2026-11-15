@@ -11,8 +11,9 @@ decision (network runs only), the mean bytes and messages sent per node,
 the mean signature verification time, CPU time and peak memory per node
 (for simulator runs, of the one process), and whether every node decided
 the same output. Simulator runs report the honest nodes only. Per experiment and size: mean and standard
-deviation over the repetitions, and the worker threads the nodes' runtimes
-had (empty for simulator runs, a range if they differ). Writes summary.csv and summary.md next to
+deviation over the repetitions, the worker threads the nodes' runtimes
+had and the round length (both empty for simulator runs, a range if they
+differ). Writes summary.csv and summary.md next to
 the runs and, with --plots and matplotlib, one PNG per metric.
 """
 
@@ -106,7 +107,7 @@ def main():
         groups[(r["experiment"], r["n"], r["t"])].append(r)
 
     header = ["experiment", "mode", "protocol", "broadcast", "n", "t", "input_bytes", "byzantine", "reps", "agreement",
-              "worker_threads"]
+              "worker_threads", "round_ms"]
     for key, _ in METRICS:
         header += [f"{key}_mean", f"{key}_std"]
     table = []
@@ -118,6 +119,7 @@ def main():
             "byzantine": runs[0].get("byzantine", 0),
             "reps": len(runs), "agreement": all(r["agreement"] for r in runs),
             "worker_threads": span(set().union(*(r["worker_threads"] for r in runs))),
+            "round_ms": span({r["round_ms"] for r in runs if r.get("round_ms") is not None}),
         }
         for key, _ in METRICS:
             vals = [r[key] for r in runs]
@@ -130,12 +132,12 @@ def main():
         w.writeheader()
         w.writerows(table)
 
-    lines = ["| experiment | mode | n | t | input B | byz | reps | agree | workers | " + " | ".join(label for _, label in METRICS) + " |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
+    lines = ["| experiment | mode | n | t | input B | byz | reps | agree | workers | round ms | " + " | ".join(label for _, label in METRICS) + " |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | " + " | ".join("---" for _ in METRICS) + " |"]
     for row in table:
         cells = [row["experiment"], row["mode"], str(row["n"]), str(row["t"]), str(row["input_bytes"]),
                  str(row["byzantine"]), str(row["reps"]), "yes" if row["agreement"] else "NO",
-                 row["worker_threads"] or "-"]
+                 row["worker_threads"] or "-", row["round_ms"] or "-"]
         for key, _ in METRICS:
             m, s = row[f"{key}_mean"], row[f"{key}_std"]
             cells.append(f"{m:,.0f} +- {s:,.0f}" if s else f"{m:,.0f}")
