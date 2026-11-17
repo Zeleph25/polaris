@@ -413,7 +413,8 @@ that record it.
     At n = 64, on a server with 16 dedicated cores (Hetzner CCX43), n
     parallel WXSD now completes in every run, all 64 processes deciding the
     same vector, with 162 to 163 MB per process on average and no late
-    message at its minimum round of 3000 ms (decision 15).
+    message at its minimum round of 3000 ms (decision 15). On a 48-core
+    server (four Xeon E7-4830 v3) it needs 149 to 152 MB at 1500 ms.
 
     *What stays.* The decoded inbox of a forwarding round, n^3 messages of
     288 bytes each (75 MB at n = 64), and the transcript. The inbox is the
@@ -521,6 +522,15 @@ that record it.
     of t: its minimum is 3000 ms, and the shortest sustained length lies
     above 2000 ms. It is the only row of the matrix that does not run at 500
     ms.
+
+    On a 48-core server (four Intel Xeon E7-4830 v3, 96 hardware threads,
+    one worker per node at n = 64), the first three again sustain 250 ms,
+    and n parallel WXSD has late messages at 250, 500 and 1000 ms and none
+    at 2000 and 1500 ms: its minimum is 1500 ms. Its cores are slower (a
+    node uses 1.7 to 2.2 times the CPU time of the CCX43), but there are six
+    times as many hardware threads, and the baseline whose rounds are
+    bounded by processing needs half the round length. The minimum of n
+    parallel WXSD is a property of the machine, not of the protocol.
 
 ## Testing
 

@@ -307,15 +307,75 @@ ssh: [docs/multihost.md](docs/multihost.md) lists what the hosts need,
 construction has no late message, and `run.py --round-ms-from` runs every
 row at 500 ms or at that minimum (decision 15 in docs/design.md).
 
-### On one server with 16 dedicated cores
+### On one server with 48 cores
 
 The runs of `eval/hosts.toml` (every node honest, three runs each) on one
-Hetzner CCX43 server (16 dedicated AMD EPYC vCPUs, 64 GB), every node a
-separate process with one runtime worker (decision 14 in docs/design.md).
-Every row runs with 500 ms rounds unless the round search (decision 15)
-found that it needs longer ones, which only n parallel WXSD at n = 64 does.
-Time to decision is the largest over the nodes, CPU time and peak memory
-are means per node, and the ranges cover the two values of t:
+EPFL lab server with four Intel Xeon E7-4830 v3 processors (48 cores, 96
+hardware threads, 2.1 GHz, 504 GB), every node a separate process. Each
+node's runtime gets 96 / n workers: 6 at n = 16, 3 at n = 32 and 1 at
+n = 64 (decision 14 in docs/design.md). Every row runs with 500 ms rounds
+unless the round search (decision 15) found that it needs longer ones,
+which only n parallel WXSD at n = 64 does. Time to decision is the largest
+over the nodes, CPU time and peak memory are means per node, and the
+ranges cover the two values of t:
+
+| | n | round | t = n/2 | t = 3n/4 | past the round | CPU per node | memory per node |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| polaris over Dolev-Strong | 16 | 500 ms | 7.5 s (round 14) | 11.5 s (round 22) | 4 to 5 ms | 113 to 117 ms | 14 MB |
+| polaris over Dolev-Strong | 32 | 500 ms | 11.5 s (round 22) | 17.5 s (round 34) | 7 to 8 ms | 228 to 237 ms | 14 MB |
+| polaris over Dolev-Strong | 64 | 500 ms | 19.5 s (round 38) | 29.5 s (round 58) | 12 to 13 ms | 546 to 567 ms | 14 MB |
+| polaris over WXSD, aggregated | 16 | 500 ms | 8.5 s (round 16) | 14.5 s (round 28) | 18 ms | 151 to 153 ms | 14 MB |
+| polaris over WXSD, aggregated | 32 | 500 ms | 8.5 s (round 16) | 14.5 s (round 28) | 28 ms | 282 to 289 ms | 14 MB |
+| polaris over WXSD, aggregated | 64 | 500 ms | 8.5 s (round 16) | 14.5 s (round 28) | 49 ms | 656 to 659 ms | 14 MB |
+| n parallel Dolev-Strong | 16 | 500 ms | 4.5 s (round 8) | 6.5 s (round 12) | 1 ms | 103 ms | 14 MB |
+| n parallel Dolev-Strong | 32 | 500 ms | 8.5 s (round 16) | 12.5 s (round 24) | 1 ms | 189 to 193 ms | 14 MB |
+| n parallel Dolev-Strong | 64 | 500 ms | 16.5 s (round 32) | 24.5 s (round 48) | 1 to 2 ms | 411 ms | 14 MB |
+| n parallel WXSD, aggregated | 16 | 500 ms | 5.6 s (round 10) | 9.6 s (round 18) | 86 to 90 ms | 350 to 364 ms | 14 MB |
+| n parallel WXSD, aggregated | 32 | 500 ms | 5.8 s (round 10) | 9.8 s (round 18) | 252 to 257 ms | 1,149 to 1,154 ms | 18 to 19 MB |
+| n parallel WXSD, aggregated | 64 | 1500 ms | 17.5 s (round 10) | 29.5 s (round 18) | 992 to 1,008 ms | 6,235 to 6,288 ms | 149 to 152 MB |
+
+Every run reaches the simulator's decision round, with the same output at
+every node and no late message. Time to decision is the round schedule, r +
+1 round lengths for decision round r, plus the processing of the last
+round: 1 to 257 ms with 500 ms rounds, and about 1 s for n parallel WXSD
+at n = 64 with its 1.5 s rounds.
+
+The shortest round length with no late message in any run, at n = 64
+(`eval/round_search.py`; a length counts once three runs have none, and
+fails at its first run with one):
+
+| | t = n/2 | t = 3n/4 |
+| --- | --- | --- |
+| polaris over Dolev-Strong | at most 250 ms | at most 250 ms |
+| polaris over WXSD, aggregated | at most 250 ms | at most 250 ms |
+| n parallel Dolev-Strong | at most 250 ms | at most 250 ms |
+| n parallel WXSD, aggregated | 1500 ms | 1500 ms |
+
+250 ms is the shortest length tried, so for the first three it is an upper
+bound. n parallel WXSD had late messages at 1000 ms and none at 1500 or
+2000 ms.
+
+At n = 64 the round length decides the comparison: polaris over WXSD
+decides in 8.5 s with t = n/2 and 14.5 s with t = 3n/4, while n parallel
+WXSD, which needs three times longer rounds, decides in 17.5 s and 29.5 s,
+about twice as late, sending 20 times the bytes (84 MB against 4.3 MB per
+node) and verifying 26 times the signatures. n parallel Dolev-Strong
+decides in 16.5 s and 24.5 s and sends about a seventh of polaris's bytes.
+
+The 16-core server below gives the same rounds, bytes and outputs. Its
+cores are faster: at n = 64, where both servers give every node one
+worker, a node here uses 1.7 to 2.2 times the CPU time. But this server
+has six times the hardware threads (96 against 16 vCPUs), so n parallel
+WXSD, whose rounds are long because every node has too much to process,
+needs half the round length (1500 against 3000 ms), and polaris's lead
+over it shrinks from about four times to about twice. The rounds of the
+other three hold at 250 ms on both servers.
+
+### On one server with 16 dedicated cores
+
+The same runs, earlier, on one Hetzner CCX43 server (16 dedicated AMD
+EPYC vCPUs, 64 GB), every node a separate process with one runtime worker,
+and with the same rules for round lengths and the same columns:
 
 | | n | round | t = n/2 | t = 3n/4 | past the round | CPU per node | memory per node |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -380,33 +440,46 @@ client reports them committed. With `--polaris`, it also runs polaris
 loopback interface are counted the same way for every system:
 
 ```
+ulimit -n 65536
 python3 eval/honest_majority.py --chatter ../libchatter-rs \
-    --polaris target/release/polaris --out eval/results/honest
+    --polaris target/release/polaris --out eval/results/honest --sizes 8 16 32 64
 ```
 
-On two cores, three runs each (bytes per process on loopback, TLS and TCP
-headers included; polaris's time is its round schedule as measured by the
-network runs above):
+`polaris local` runs every node in one process, so from n = 32 it needs
+more open files than the usual limit of 1,024; without the `ulimit`, its
+nodes time out waiting for each other's handshakes. On a machine without
+OpenSSL's development headers, libchatter-rs builds once its two
+`openssl = "0.10"` dependencies (in `net/Cargo.toml` and
+`tools/genconfig/Cargo.toml`) take `features = ["vendored"]`, which
+compiles OpenSSL from source.
 
-| | n = 8 | n = 16 | n = 32 |
+On the 48-core server, three runs each (bytes per process on loopback, TLS
+and TCP headers included; polaris's time is its round schedule as measured
+by the network runs above, which start at n = 16):
+
+| | n = 16 | n = 32 | n = 64 |
 | --- | --- | --- | --- |
-| Sync HotStuff | 1.03 s, 17 KB | 1.04 s, 35 KB | 1.09 s, 86 KB |
-| Apollo | 7 ms, 22 KB | 32 ms, 56 KB | 129 ms, 163 KB |
-| polaris over Dolev-Strong, t = n/2 | 5.5 s, 23 KB | 7.5 s, 121 KB | 11.5 s, 795 KB |
-| polaris over WXSD, aggregated, t = n/2 | 8.5 s, 76 KB | 8.6 s, 287 KB | 8.7 s, 1.11 MB |
-| polaris over Dolev-Strong, t = 3n/4 | 8.5 s, 22 KB | 11.5 s, 121 KB | 17.5 s, 624 KB |
-| polaris over WXSD, aggregated, t = 3n/4 | 14.5 s, 76 KB | 14.6 s, 287 KB | 14.7 s, 1.11 MB |
+| Sync HotStuff | 1.00 s, 36 KB | 1.01 s, 92 KB | 1.01 s, 262 KB |
+| Apollo | 6 ms, 56 KB | 32 ms, 190 KB | 254 ms, 710 KB |
+| polaris over Dolev-Strong, t = n/2 | 7.5 s, 121 KB | 11.5 s, 795 KB | 19.5 s, 5.11 MB |
+| polaris over WXSD, aggregated, t = n/2 | 8.5 s, 287 KB | 8.5 s, 1.11 MB | 8.5 s, 4.37 MB |
+| polaris over Dolev-Strong, t = 3n/4 | 11.5 s, 121 KB | 17.5 s, 624 KB | 29.5 s, 4.44 MB |
+| polaris over WXSD, aggregated, t = 3n/4 | 14.5 s, 287 KB | 14.5 s, 1.11 MB | 14.5 s, 4.37 MB |
 
 The comparison is not like for like: those protocols tolerate fewer than
 n/2 faults, agree on a leader's block of client transactions rather than on
 every process's own input, and Apollo is responsive, so on loopback its
 latency is the network's rather than Delta's. Sync HotStuff, which waits
 on Delta as polaris does, commits in about 2 Delta; at t = n/2 polaris needs
-11 to 23 rounds of Delta at these sizes, and at n = 32 sends 9 (over
-Dolev-Strong) to 13 (over WXSD) times its bytes. Configured for a dishonest
-majority, t = 3n/4, which those protocols cannot be, polaris needs 17 to 35
-rounds of Delta over Dolev-Strong and 29 over WXSD, for about the same
-bytes.
+15 to 39 rounds of Delta at these sizes, and at n = 64 sends 17 (over WXSD)
+to 20 (over Dolev-Strong) times its bytes. Configured for a dishonest
+majority, t = 3n/4, which those protocols cannot be, polaris needs 23 to 59
+rounds of Delta over Dolev-Strong and 29 over WXSD, for the same bytes over
+WXSD and no more over Dolev-Strong.
+
+The same runs on two cores, at n = 8 to 32, gave polaris the same bytes and
+Sync HotStuff about 2 Delta again (1.03 to 1.09 s); Apollo's latency there
+was 7 to 129 ms, against 2 to 32 ms on the 48-core server.
 
 ## Conventions
 

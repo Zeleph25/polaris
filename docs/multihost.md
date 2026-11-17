@@ -112,6 +112,28 @@ runs of the file take about an hour and a half. `--only m-ic-ds` runs one
 experiment. Send back the `eval/results/hosts` directory, or at least the
 `summary.csv` and `summary.md` that `aggregate.py` writes there.
 
+## On one machine
+
+To run every node on one machine (the README's 48-core numbers), no ssh,
+ports or clock setup is needed: build polaris there, write a copy of the
+experiment file without a `[hosts]` table, and run from the repository on
+that machine, inside `tmux`:
+
+```
+python3 eval/hetzner/hosts.py eval/hosts.toml localhost > ~/one.toml
+python3 eval/run.py ~/one.toml --only smoke-echo --out eval/results/one
+python3 eval/round_search.py ~/one.toml --sizes 64:32,64:48 --out eval/results/one/search
+python3 eval/run.py ~/one.toml --round-ms-from eval/results/one/search/minimums.csv --out eval/results/one
+python3 eval/aggregate.py eval/results/one
+```
+
+`hosts.py` with a single address drops the `[hosts]` table and starts each
+run 10 s after its configs are written. On the 48-core server the search
+and the matrix took about 50 minutes together. Copy the results
+back without the transcripts and logs, which are large:
+`tar czf one.tgz --exclude='*.transcript.jsonl' --exclude='*.log'` in
+`eval/results`.
+
 ## On Hetzner Cloud
 
 `eval/hetzner/` creates the servers, builds polaris on each one from
@@ -160,8 +182,8 @@ Hetzner Console lists anything left.
 
 A new account may create only a few dedicated cores ("dedicated core limit
 exceeded"); with 16, `TYPE=ccx43 eval/hetzner/up.sh single` creates a
-CCX43 (16 dedicated cores), on which the README's network numbers were
-measured. The Limits tab of the projects page in the Hetzner Console
+CCX43 (16 dedicated cores), on which the README's second set of network
+numbers was measured. The Limits tab of the projects page in the Hetzner Console
 shows the limits, and its Request limit increase button asks for more
 (handled by hand, during business hours; an account that is too new cannot
 ask yet). Until then, `single-shared` (one 16-core
