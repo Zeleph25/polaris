@@ -67,13 +67,10 @@ rand_chacha = "0.10"
 
 # data structures, parallelism
 fixedbitset = "0.5"
-rayon = "1"
 
 # runtime and I/O
 tokio = { version = "1", features = ["full"] }
 libc = "0.2"
-tokio-util = { version = "0.7", features = ["codec"] }
-bytes = "1"
 
 # CLI, config, logging, errors
 clap = { version = "4", features = ["derive"] }

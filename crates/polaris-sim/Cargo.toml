@@ -9,13 +9,13 @@ description = "Lockstep simulator: adversaries, transcripts, property tests"
 [dependencies]
 polaris-core.workspace = true
 polaris-crypto.workspace = true
-polaris-proto.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+polaris-proto.workspace = true
 proptest.workspace = true
 insta.workspace = true
 

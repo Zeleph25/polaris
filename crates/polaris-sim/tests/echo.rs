@@ -46,11 +46,9 @@ fn all_honest_agree_after_two_rounds() {
         assert_eq!(o, &first, "node {i} differs");
         assert_eq!(o.agreeing, NodeSet::full(n));
     }
-    for j in 0..n {
-        assert_eq!(
-            first.values[j].as_deref(),
-            Some(value(j as NodeId).as_slice())
-        );
+    assert_eq!(first.values.len(), n);
+    for (j, v) in first.values.iter().enumerate() {
+        assert_eq!(v.as_deref(), Some(value(j as NodeId).as_slice()));
     }
     // Every node sent n messages in each of the two rounds and received as many.
     let m = sim.metrics(3).total();

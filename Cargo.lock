@@ -1046,7 +1046,6 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rayon",
  "rstest",
  "serde",
  "thiserror",

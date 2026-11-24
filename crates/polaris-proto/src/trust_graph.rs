@@ -195,8 +195,8 @@ fn id(i: usize) -> NodeId {
 impl std::fmt::Debug for TrustGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut edges = Vec::new();
-        for a in 0..self.n {
-            for b in self.adj[a].iter() {
+        for (a, neighbors) in self.adj.iter().enumerate() {
+            for b in neighbors.iter() {
                 if usize::from(b) > a {
                     edges.push((a, b));
                 }
